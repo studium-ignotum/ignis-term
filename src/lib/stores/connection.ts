@@ -1,10 +1,21 @@
 /**
  * WebSocket connection store for browser-to-relay communication.
  * Uses reconnecting-websocket for automatic reconnection.
+ * Routes terminal_data and config messages to the terminal store.
  */
 
 import ReconnectingWebSocket, { type ErrorEvent as RWSErrorEvent } from 'reconnecting-websocket';
-import type { JoinMessage, JoinedMessage, ErrorMessage, DataMessage } from '../../shared/protocol';
+import type {
+  JoinMessage,
+  JoinedMessage,
+  ErrorMessage,
+  DataMessage,
+  TerminalDataMessage,
+  TerminalInputMessage,
+  TerminalResizeMessage,
+  ConfigMessage,
+} from '../../shared/protocol';
+import { terminalStore } from './terminal.svelte';
 
 // =============================================================================
 // Connection State Types
@@ -23,6 +34,7 @@ export type ConnectionState =
 
 let state = $state<ConnectionState>('disconnected');
 let error = $state<string | null>(null);
+let sessionId = $state<string | null>(null);
 let ws: ReconnectingWebSocket | null = null;
 let currentCode: string | null = null;
 
@@ -36,6 +48,7 @@ let currentCode: string | null = null;
 export const connectionStore = {
   get state() { return state; },
   get error() { return error; },
+  get sessionId() { return sessionId; },
   get isConnected() { return state === 'connected'; }
 };
 
@@ -66,7 +79,10 @@ function handleMessage(event: MessageEvent): void {
         const msg = data as JoinedMessage;
         console.log('[Connection] Joined session:', msg.sessionId);
         state = 'connected';
+        sessionId = msg.sessionId;
         error = null;
+        // Set the active terminal session
+        terminalStore.setActiveSession(msg.sessionId);
         break;
       }
 
@@ -75,6 +91,7 @@ function handleMessage(event: MessageEvent): void {
         console.error('[Connection] Error:', msg.code, msg.message);
         error = msg.message;
         state = 'disconnected';
+        sessionId = null;
         // Close connection on auth error
         if (ws) {
           ws.close();
@@ -85,9 +102,34 @@ function handleMessage(event: MessageEvent): void {
 
       case 'data': {
         const msg = data as DataMessage;
-        // Emit to terminal - placeholder for Phase 2
-        // Will dispatch a custom event or call a callback
+        // Legacy generic data message - log for debugging
         console.log('[Connection] Data received:', msg.payload.length, 'bytes');
+        break;
+      }
+
+      // -- Terminal I/O messages (Phase 2) ----------------------------------
+
+      case 'terminal_data': {
+        const msg = data as TerminalDataMessage;
+        terminalStore.writeData(msg.sessionId, msg.payload);
+        break;
+      }
+
+      case 'config': {
+        const msg = data as ConfigMessage;
+        console.log('[Connection] Config received:', msg.font, msg.fontSize);
+        terminalStore.applyConfig(msg);
+        break;
+      }
+
+      // -- Tab management messages (placeholder for Plan 02-05) -------------
+
+      case 'tab_list':
+      case 'tab_switch':
+      case 'tab_created':
+      case 'tab_closed': {
+        // Will be handled in Plan 02-05
+        console.log('[Connection] Tab message received:', data.type);
         break;
       }
 
@@ -136,6 +178,7 @@ export function connect(sessionCode: string): void {
 
   state = 'connecting';
   error = null;
+  sessionId = null;
   currentCode = sessionCode;
 
   // Get relay URL from environment or use default
@@ -166,12 +209,48 @@ export function disconnect(): void {
   }
   state = 'disconnected';
   error = null;
+  sessionId = null;
   currentCode = null;
+  terminalStore.setActiveSession(null);
 }
 
 /**
- * Send data to the terminal (Mac client)
- * Used for keyboard input in Phase 2
+ * Send a typed message to the relay server.
+ * Used for terminal_input, terminal_resize, tab operations, etc.
+ */
+export function sendMessage(message: object): void {
+  if (state === 'connected' && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
+}
+
+/**
+ * Send terminal input for a session.
+ */
+export function sendTerminalInput(termSessionId: string, payload: string): void {
+  const msg: TerminalInputMessage = {
+    type: 'terminal_input',
+    sessionId: termSessionId,
+    payload,
+  };
+  sendMessage(msg);
+}
+
+/**
+ * Send terminal resize for a session.
+ */
+export function sendTerminalResize(termSessionId: string, cols: number, rows: number): void {
+  const msg: TerminalResizeMessage = {
+    type: 'terminal_resize',
+    sessionId: termSessionId,
+    cols,
+    rows,
+  };
+  sendMessage(msg);
+}
+
+/**
+ * Send data to the terminal (Mac client) - legacy generic data message
  */
 export function send(payload: string): void {
   if (state === 'connected' && ws && ws.readyState === WebSocket.OPEN) {

@@ -21,6 +21,7 @@ const __dirname = path.dirname(__filename);
 
 const SOCKET_PATH = '/tmp/iterm-bridge.sock';
 const PYTHON_SCRIPT = path.join(__dirname, '..', 'iterm-bridge.py');
+const VENV_PYTHON = path.join(__dirname, '..', '.venv', 'bin', 'python3');
 const RESTART_DELAY_MS = 3000;
 const MAX_CONNECT_RETRIES = 10;
 const CONNECT_RETRY_DELAY_MS = 500;
@@ -67,8 +68,12 @@ export class ITerm2Bridge extends EventEmitter {
     // Clean up stale socket file
     try { fs.unlinkSync(SOCKET_PATH); } catch { /* ignore */ }
 
+    // Use venv Python if available, fall back to system python3
+    const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
+    console.log(`[iTerm2Bridge] Using Python: ${pythonBin}`);
+
     // Launch Python subprocess
-    this.process = spawn('python3', [PYTHON_SCRIPT, SOCKET_PATH], {
+    this.process = spawn(pythonBin, [PYTHON_SCRIPT, SOCKET_PATH], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -82,7 +87,7 @@ export class ITerm2Bridge extends EventEmitter {
       if (msg.includes('ModuleNotFoundError') && msg.includes('iterm2')) {
         console.error(
           '[iTerm2Bridge] Python iterm2 package not installed.\n' +
-          'Install it with: pip3 install iterm2'
+          'Install it with: cd mac-client && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt'
         );
       }
       console.error('[iTerm2Bridge] Python stderr:', msg);

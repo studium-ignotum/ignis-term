@@ -14,8 +14,13 @@ import type {
   TerminalInputMessage,
   TerminalResizeMessage,
   ConfigMessage,
+  TabListMessage,
+  TabSwitchMessage,
+  TabCreatedMessage,
+  TabClosedMessage,
 } from '../../shared/protocol';
 import { terminalStore } from './terminal.svelte';
+import { tabsStore } from './tabs.svelte';
 
 // =============================================================================
 // Connection State Types
@@ -122,14 +127,33 @@ function handleMessage(event: MessageEvent): void {
         break;
       }
 
-      // -- Tab management messages (placeholder for Plan 02-05) -------------
+      // -- Tab management messages ----------------------------------------------
 
-      case 'tab_list':
-      case 'tab_switch':
-      case 'tab_created':
+      case 'tab_list': {
+        const msg = data as TabListMessage;
+        console.log('[Connection] Tab list received:', msg.tabs.length, 'tabs');
+        tabsStore.setTabs(msg.tabs);
+        break;
+      }
+
+      case 'tab_switch': {
+        const msg = data as TabSwitchMessage;
+        console.log('[Connection] Tab switch:', msg.tabId);
+        tabsStore.handleTabSwitch(msg.tabId);
+        break;
+      }
+
+      case 'tab_created': {
+        const msg = data as TabCreatedMessage;
+        console.log('[Connection] Tab created:', msg.tab.tabId, msg.tab.title);
+        tabsStore.handleTabCreated(msg.tab);
+        break;
+      }
+
       case 'tab_closed': {
-        // Will be handled in Plan 02-05
-        console.log('[Connection] Tab message received:', data.type);
+        const msg = data as TabClosedMessage;
+        console.log('[Connection] Tab closed:', msg.tabId);
+        tabsStore.handleTabClosed(msg.tabId);
         break;
       }
 
@@ -212,6 +236,7 @@ export function disconnect(): void {
   sessionId = null;
   currentCode = null;
   terminalStore.setActiveSession(null);
+  tabsStore.reset();
 }
 
 /**

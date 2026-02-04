@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { connectionStore, disconnect, sendTerminalInput, sendTerminalResize } from '$lib/stores/connection';
+	import { connectionStore, disconnect, sendTerminalInput, sendTerminalResize } from '$lib/stores/connection.svelte';
 	import { terminalStore } from '$lib/stores/terminal.svelte';
 	import { tabsStore } from '$lib/stores/tabs.svelte';
 	import Terminal from '$lib/components/Terminal.svelte';

@@ -4,7 +4,11 @@
 	import { browser } from '$app/environment';
 	import { connectionStore, disconnect, sendTerminalInput, sendTerminalResize } from '$lib/stores/connection';
 	import { terminalStore } from '$lib/stores/terminal.svelte';
+	import { tabsStore } from '$lib/stores/tabs.svelte';
 	import Terminal from '$lib/components/Terminal.svelte';
+	import TerminalTabs from '$lib/components/TerminalTabs.svelte';
+	import MobileControlBar from '$lib/components/MobileControlBar.svelte';
+	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 
 	// Redirect to login if not connected on mount
 	onMount(() => {
@@ -32,7 +36,6 @@
 	}
 
 	function handleBinaryInput(data: string) {
-		// Binary input (e.g. certain mouse reports) sent same way as text input
 		const sid = terminalStore.activeSessionId;
 		if (sid) {
 			sendTerminalInput(sid, data);
@@ -45,6 +48,15 @@
 			sendTerminalResize(sid, cols, rows);
 		}
 	}
+
+	function handleMobileKey(data: string) {
+		const sid = terminalStore.activeSessionId;
+		if (sid) {
+			sendTerminalInput(sid, data);
+		}
+	}
+
+	let hasTabs = $derived(tabsStore.tabs.length > 0);
 </script>
 
 <svelte:head>
@@ -52,36 +64,47 @@
 </svelte:head>
 
 <div class="terminal-page">
-	{#if connectionStore.isConnected && terminalStore.activeSessionId}
-		<div class="terminal-area">
-			<Terminal
-				options={terminalStore.options}
-				onInput={handleInput}
-				onBinaryInput={handleBinaryInput}
-				onTerminalResize={handleResize}
-			/>
-		</div>
-	{:else}
-		<main class="main-content">
-			<h1>Terminal</h1>
-			<p class="placeholder">Waiting for terminal session...</p>
-
-			<div class="status-info">
-				<p>
-					<strong>Status:</strong>
-					<span class="status-badge">{connectionStore.state}</span>
-				</p>
-			</div>
-		</main>
-	{/if}
-
-	<div class="toolbar">
-		<span class="status-dot" class:connected={connectionStore.isConnected}></span>
-		<span class="status-text">{connectionStore.state}</span>
+	<!-- Header bar -->
+	<header class="header-bar">
+		<ConnectionStatus />
+		<div class="header-spacer"></div>
 		<button class="btn-disconnect" onclick={handleDisconnect}>
 			Disconnect
 		</button>
-	</div>
+	</header>
+
+	<!-- Main content: sidebar + terminal area -->
+	{#if connectionStore.isConnected && terminalStore.activeSessionId}
+		<div class="main-layout">
+			{#if hasTabs}
+				<TerminalTabs />
+			{/if}
+			<div class="terminal-column">
+				<div class="terminal-area">
+					<Terminal
+						options={terminalStore.options}
+						onInput={handleInput}
+						onBinaryInput={handleBinaryInput}
+						onTerminalResize={handleResize}
+					/>
+				</div>
+				<MobileControlBar onKey={handleMobileKey} />
+			</div>
+		</div>
+	{:else}
+		<main class="waiting-state">
+			<div class="waiting-content">
+				<div class="spinner"></div>
+				<h2>Waiting for terminal session...</h2>
+				<p class="waiting-detail">
+					The Mac client will send terminal data once connected.
+				</p>
+				<div class="status-info">
+					<span class="status-badge">{connectionStore.state}</span>
+				</div>
+			</div>
+		</main>
+	{/if}
 </div>
 
 <style>
@@ -93,75 +116,24 @@
 		color: var(--text-primary, #d4d4d4);
 	}
 
-	.terminal-area {
-		flex: 1;
-		min-height: 0;
-		overflow: hidden;
-	}
+	/* -- Header bar ---------------------------------------------------------- */
 
-	.main-content {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 24px;
-	}
-
-	h1 {
-		font-size: 24px;
-		margin-bottom: 16px;
-	}
-
-	.placeholder {
-		color: var(--text-secondary, #888);
-		margin-bottom: 24px;
-	}
-
-	.status-info {
-		padding: 16px;
-		background: var(--bg-secondary, #2a2a2a);
-		border-radius: 8px;
-		margin-bottom: 24px;
-	}
-
-	.status-badge {
-		display: inline-block;
-		padding: 4px 12px;
-		background: rgba(34, 197, 94, 0.2);
-		color: #22c55e;
-		border-radius: 16px;
-		font-size: 14px;
-		font-weight: 500;
-	}
-
-	.toolbar {
+	.header-bar {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 4px 12px;
-		background: var(--bg-secondary, #2a2a2a);
-		border-top: 1px solid var(--border, #333);
-		font-size: 12px;
+		background: var(--bg-secondary, #1a1a1a);
+		border-bottom: 1px solid var(--border, #333);
+		flex-shrink: 0;
+		min-height: 36px;
 	}
 
-	.status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #888;
-	}
-
-	.status-dot.connected {
-		background: #22c55e;
-	}
-
-	.status-text {
-		color: var(--text-secondary, #888);
+	.header-spacer {
+		flex: 1;
 	}
 
 	.btn-disconnect {
-		margin-left: auto;
 		padding: 4px 12px;
 		background: transparent;
 		color: var(--text-secondary, #888);
@@ -176,5 +148,90 @@
 		background: var(--danger, #dc2626);
 		color: white;
 		border-color: var(--danger, #dc2626);
+	}
+
+	/* -- Main layout --------------------------------------------------------- */
+
+	.main-layout {
+		flex: 1;
+		display: flex;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.terminal-column {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.terminal-area {
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	/* -- Waiting state ------------------------------------------------------- */
+
+	.waiting-state {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 24px;
+	}
+
+	.waiting-content {
+		text-align: center;
+	}
+
+	.spinner {
+		width: 32px;
+		height: 32px;
+		border: 3px solid var(--border, #333);
+		border-top-color: var(--accent, #22c55e);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		margin: 0 auto 16px;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.waiting-content h2 {
+		font-size: 18px;
+		font-weight: 500;
+		margin-bottom: 8px;
+	}
+
+	.waiting-detail {
+		color: var(--text-secondary, #888);
+		font-size: 14px;
+		margin-bottom: 16px;
+	}
+
+	.status-info {
+		display: inline-block;
+	}
+
+	.status-badge {
+		display: inline-block;
+		padding: 4px 12px;
+		background: rgba(34, 197, 94, 0.15);
+		color: #22c55e;
+		border-radius: 16px;
+		font-size: 13px;
+		font-weight: 500;
+	}
+
+	/* -- Responsive ---------------------------------------------------------- */
+
+	@media (max-width: 767px) {
+		.header-bar {
+			padding: 4px 8px;
+		}
 	}
 </style>

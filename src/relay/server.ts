@@ -116,13 +116,14 @@ function handleMacConnection(ws: WebSocket): void {
         console.log(`[Relay] Mac re-registered (ignored), clientId: ${msg.clientId}`);
         break;
 
-      default:
-        // JoinMessage not valid from Mac
-        sendJson(ws, {
-          type: 'error',
-          code: 'INVALID_MESSAGE',
-          message: 'Unexpected message type for Mac client',
-        });
+      default: {
+        // Forward any valid parsed message to paired browser
+        // (terminal_data, tab_list, tab_created, tab_closed, tab_switch, config, etc.)
+        const session = sessionRegistry.findSessionByMac(ws);
+        if (session?.browser?.readyState === WebSocket.OPEN) {
+          session.browser.send(raw);
+        }
+      }
     }
   });
 
@@ -212,12 +213,13 @@ function handleBrowserConnection(ws: WebSocket): void {
         });
         break;
 
-      default:
-        sendJson(ws, {
-          type: 'error',
-          code: 'INVALID_MESSAGE',
-          message: 'Unexpected message type for Browser client',
-        });
+      default: {
+        // Forward any valid parsed message to paired Mac
+        // (terminal_input, terminal_resize, tab_switch, tab_create, tab_close, etc.)
+        if (state.joinedSession?.mac?.readyState === WebSocket.OPEN) {
+          state.joinedSession.mac.send(raw);
+        }
+      }
     }
   });
 

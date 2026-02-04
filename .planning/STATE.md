@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-02-04)
 ## Current Position
 
 Phase: 2 of 3 (Terminal & iTerm2 Integration)
-Plan: 3 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-02-05 - Completed 02-03-PLAN.md
+Last activity: 2026-02-05 - Completed 02-04-PLAN.md
 
-Progress: [#######---] 67%
+Progress: [########--] 78%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
+- Total plans completed: 7
 - Average duration: 4 min
-- Total execution time: 0.40 hours
+- Total execution time: 0.47 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Connection & Auth | 3 | 14 min | 5 min |
-| 2. Terminal & iTerm2 | 3 | 10 min | 3 min |
+| 2. Terminal & iTerm2 | 4 | 14 min | 4 min |
 | 3. Performance | - | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 01-03 (4 min), 02-01 (4 min), 02-02 (3 min), 02-03 (3 min)
+- Last 5 plans: 02-01 (4 min), 02-02 (3 min), 02-03 (3 min), 02-04 (4 min)
 - Trend: Stable, fast execution
 
 *Updated after each plan completion*
@@ -58,6 +58,8 @@ Recent decisions affecting current work:
 | One coprocess socket per session | Avoids multiplexing complexity in coprocess shell script | 02-02 |
 | Base64 encoding for terminal data | Raw PTY bytes may contain non-UTF-8, safe for JSON transport | 02-02 |
 | fileURLToPath for ESM dirname | tsconfig bundler moduleResolution lacks import.meta.dirname types | 02-03 |
+| Import addon types from xterm-svelte re-exports | pnpm virtual store prevents direct @xterm/* type imports | 02-04 |
+| Terminal.svelte exports write/getTerminal/fit | Store needs to write data to specific terminal instances | 02-04 |
 
 ### Pending Todos
 
@@ -70,5 +72,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-05
-Stopped at: Completed 02-03-PLAN.md
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None

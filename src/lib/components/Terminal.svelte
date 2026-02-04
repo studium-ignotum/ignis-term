@@ -3,17 +3,21 @@
 	import type { Terminal, ITerminalOptions, FitAddon, WebglAddon } from '@battlefieldduck/xterm-svelte';
 	import { onDestroy } from 'svelte';
 	import { TERMINAL_RESIZE_DEBOUNCE_MS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS } from '../../shared/constants';
+	import { terminalStore } from '$lib/stores/terminal.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Props
 	// ---------------------------------------------------------------------------
 
 	let {
+		sessionId,
 		options = {} as ITerminalOptions,
 		onInput,
 		onBinaryInput,
 		onTerminalResize,
 	}: {
+		/** Session ID this terminal displays — used for store registration */
+		sessionId: string;
 		/** xterm.js terminal options (theme, font, cursor, scrollback, etc.) */
 		options?: ITerminalOptions;
 		/** Called when user types or pastes — send as terminal_input */
@@ -40,6 +44,9 @@
 
 	async function handleLoad(term: Terminal): Promise<void> {
 		terminal = term;
+
+		// Register with terminal store so incoming data can be routed here
+		terminalStore.registerTerminal(sessionId, term);
 
 		// -- WebGL renderer (with DOM fallback) --------------------------------
 		try {
@@ -180,6 +187,7 @@
 		resizeObserver = null;
 		webglAddonRef = null;
 		fitAddonRef = null;
+		terminalStore.unregisterTerminal(sessionId);
 		// xterm-svelte handles terminal.dispose() on its own destroy
 	});
 </script>

@@ -82,6 +82,7 @@
 			<div class="terminal-column">
 				<div class="terminal-area">
 					<Terminal
+						sessionId={terminalStore.activeSessionId}
 						options={terminalStore.options}
 						onInput={handleInput}
 						onBinaryInput={handleBinaryInput}

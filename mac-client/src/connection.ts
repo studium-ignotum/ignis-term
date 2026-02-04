@@ -18,6 +18,7 @@ export interface ConnectionEvents {
   onCodeReceived: (code: string) => void;
   onStateChange?: (state: ConnectionState) => void;
   onError?: (error: Error) => void;
+  onMessage?: (data: string) => void;
 }
 
 export class ConnectionManager {
@@ -104,7 +105,8 @@ export class ConnectionManager {
           break;
 
         default:
-          console.warn('[Connection] Unknown message type:', message.type);
+          // Forward all other message types to the session manager
+          this.events.onMessage?.(data.toString());
       }
     } catch (err) {
       console.error('[Connection] Failed to parse message:', err);
@@ -224,5 +226,15 @@ export class ConnectionManager {
    */
   getClientId(): string {
     return this.clientId;
+  }
+
+  /**
+   * Send a raw message to the relay server.
+   * Used by SessionManager to forward terminal data and tab messages.
+   */
+  send(data: string): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    }
   }
 }

@@ -3,9 +3,12 @@
  *
  * Connects to the relay server, receives a session code,
  * and displays it for the user to enter in their browser.
+ * Integrates the iTerm2 Python bridge via SessionManager
+ * for terminal I/O routing.
  */
 
 import { ConnectionManager } from './connection.js';
+import { SessionManager } from './session-manager.js';
 
 const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:8080/mac';
 
@@ -30,15 +33,27 @@ function displaySessionCode(code: string): void {
   console.log();
 }
 
+// Create the session manager that routes terminal I/O between
+// the iTerm2 Python bridge and the relay WebSocket connection.
+const sessionManager = new SessionManager((message) => {
+  manager.send(message);
+});
+
 const manager = new ConnectionManager(RELAY_URL, {
   onCodeReceived: (code) => {
     displaySessionCode(code);
   },
   onStateChange: (state) => {
-    // Additional state handling if needed
     if (state === 'connected') {
       console.log('[Status] Ready for browser connections');
+      // Start the iTerm2 bridge once connected to relay
+      sessionManager.start().catch((err) => {
+        console.error('[Error] Failed to start iTerm2 bridge:', err);
+      });
     }
+  },
+  onMessage: (data) => {
+    sessionManager.handleRelayMessage(data);
   },
   onError: (error) => {
     console.error('[Error]', error.message);
@@ -46,28 +61,36 @@ const manager = new ConnectionManager(RELAY_URL, {
 });
 
 // Handle graceful shutdown
-process.on('SIGINT', () => {
+async function shutdown(): Promise<void> {
   console.log('\nShutting down...');
+  await sessionManager.stop();
   manager.disconnect();
   process.exit(0);
+}
+
+process.on('SIGINT', () => {
+  shutdown().catch(() => process.exit(1));
 });
 
 process.on('SIGTERM', () => {
-  manager.disconnect();
-  process.exit(0);
+  shutdown().catch(() => process.exit(1));
 });
 
 // Handle uncaught errors
 process.on('uncaughtException', (err) => {
   console.error('[Fatal] Uncaught exception:', err);
-  manager.disconnect();
-  process.exit(1);
+  sessionManager.stop().finally(() => {
+    manager.disconnect();
+    process.exit(1);
+  });
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[Fatal] Unhandled rejection:', reason);
-  manager.disconnect();
-  process.exit(1);
+  sessionManager.stop().finally(() => {
+    manager.disconnect();
+    process.exit(1);
+  });
 });
 
 // Start connection

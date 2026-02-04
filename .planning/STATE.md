@@ -10,30 +10,30 @@ See: .planning/PROJECT.md (updated 2026-02-04)
 ## Current Position
 
 Phase: 1 of 3 (Connection & Authentication)
-Plan: 1 of ? in current phase
+Plan: 2 of ? in current phase
 Status: In progress
-Last activity: 2026-02-04 - Completed 01-01-PLAN.md (WebSocket Relay Server)
+Last activity: 2026-02-04 - Completed 01-02-PLAN.md (Mac Client Connection)
 
-Progress: [#---------] 10%
+Progress: [##--------] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 7 min
-- Total execution time: 0.12 hours
+- Total plans completed: 2
+- Average duration: 5 min
+- Total execution time: 0.17 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Connection & Auth | 1 | 7 min | 7 min |
+| 1. Connection & Auth | 2 | 10 min | 5 min |
 | 2. Terminal & iTerm2 | - | - | - |
 | 3. Performance | - | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (7 min)
-- Trend: N/A (first plan)
+- Last 5 plans: 01-01 (7 min), 01-02 (3 min)
+- Trend: Improving
 
 *Updated after each plan completion*
 
@@ -49,6 +49,8 @@ Recent decisions affecting current work:
 | 6-char session codes with nolookalikes alphabet | Balance human-typeable and collision-resistant (~1B combinations) | 01-01 |
 | 5-minute code expiry, infinite once paired | Codes expire unused but last forever once connected | 01-01 |
 | Zod discriminated unions for protocol | Compile-time + runtime safety for WebSocket messages | 01-01 |
+| State machine for connection lifecycle | Validates transitions, prevents invalid state jumps | 01-02 |
+| Exponential backoff 1s/2x/30s max with 10% jitter | Balance quick recovery with server protection | 01-02 |
 
 ### Pending Todos
 
@@ -60,6 +62,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-04T07:56:44Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-02-04T08:02:28Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

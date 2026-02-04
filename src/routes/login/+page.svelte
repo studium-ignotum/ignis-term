@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { connectionStore, connect } from '$lib/stores/connection';
+	import { connectionStore, connect } from '$lib/stores/connection.svelte';
 
 	let sessionCode = $state('');
 	let isSubmitting = $state(false);

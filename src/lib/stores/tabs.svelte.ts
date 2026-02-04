@@ -11,7 +11,7 @@
 
 import type { TabInfo } from '../../shared/protocol';
 import { terminalStore } from './terminal.svelte';
-import { sendMessage } from './connection';
+import { sendMessage } from './connection.svelte';
 
 // =============================================================================
 // State (Svelte 5 Runes)

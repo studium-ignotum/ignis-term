@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { connectionStore } from '$lib/stores/connection';
+  import { connectionStore } from '$lib/stores/connection.svelte';
 
   // Map state to display info
   const stateDisplay = {

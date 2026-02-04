@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
-	import { connectionStore } from '$lib/stores/connection';
+	import { connectionStore } from '$lib/stores/connection.svelte';
 
 	let { children } = $props();
 </script>

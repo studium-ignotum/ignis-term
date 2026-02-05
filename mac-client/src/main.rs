@@ -1,38 +1,20 @@
 //! Mac Client - Menu Bar Application
 //!
 //! A macOS menu bar application for managing remote terminal sessions.
-//! This module sets up the tray icon and handles user interactions.
+//! This module integrates the tray icon, relay client, and IPC server.
 
 use image::ImageReader;
+use mac_client::app::{AppState, BackgroundCommand, UiEvent};
+use mac_client::ipc::{IpcEvent, IpcServer};
+use mac_client::relay::{RelayClient, RelayEvent};
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use std::io::Cursor;
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::runtime::Runtime;
 use tray_icon::{TrayIconBuilder, TrayIconEvent};
-use tracing::{debug, info};
-
-// Channel message types for UI <-> background communication (future use)
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum UiCommand {
-    /// Request to copy session code to clipboard
-    CopyCode,
-    /// Toggle auto-start at login
-    ToggleLoginItem(bool),
-    /// Request application quit
-    Quit,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum BackgroundEvent {
-    /// Connection status changed
-    ConnectionStatus(String),
-    /// Session code updated
-    SessionCode(String),
-    /// Active session count changed
-    SessionCount(u32),
-}
+use tracing::{debug, error, info, warn};
 
 // Menu item IDs
 const ID_COPY_CODE: &str = "copy_code";
@@ -46,6 +28,16 @@ fn main() {
         .init();
 
     info!("Starting mac-client menu bar application");
+
+    // Create channels for UI <-> background communication
+    let (ui_tx, ui_rx) = mpsc::channel::<UiEvent>();
+    let (bg_tx, bg_rx) = mpsc::channel::<BackgroundCommand>();
+
+    // Spawn background thread with Tokio runtime
+    let ui_tx_bg = ui_tx.clone();
+    let bg_handle = thread::spawn(move || {
+        run_background_tasks(ui_tx_bg, bg_rx);
+    });
 
     // Load icon from embedded bytes
     let icon_bytes = include_bytes!("../resources/icon.png");
@@ -76,16 +68,31 @@ fn main() {
 
     // Assemble menu
     menu.append(&code_item).expect("Failed to add code item");
-    menu.append(&status_item).expect("Failed to add status item");
-    menu.append(&sessions_item).expect("Failed to add sessions item");
-    menu.append(&PredefinedMenuItem::separator()).expect("Failed to add separator");
-    menu.append(&copy_code_item).expect("Failed to add copy item");
-    menu.append(&PredefinedMenuItem::separator()).expect("Failed to add separator");
-    menu.append(&login_item).expect("Failed to add login item");
-    menu.append(&PredefinedMenuItem::separator()).expect("Failed to add separator");
+    menu.append(&status_item)
+        .expect("Failed to add status item");
+    menu.append(&sessions_item)
+        .expect("Failed to add sessions item");
+    menu.append(&PredefinedMenuItem::separator())
+        .expect("Failed to add separator");
+    menu.append(&copy_code_item)
+        .expect("Failed to add copy item");
+    menu.append(&PredefinedMenuItem::separator())
+        .expect("Failed to add separator");
+    menu.append(&login_item)
+        .expect("Failed to add login item");
+    menu.append(&PredefinedMenuItem::separator())
+        .expect("Failed to add separator");
     menu.append(&quit_item).expect("Failed to add quit item");
 
     debug!("Menu constructed with {} items", 9);
+
+    // Create app state with menu item references
+    let mut app_state = AppState::new(
+        code_item,
+        status_item,
+        sessions_item,
+        copy_code_item.clone(),
+    );
 
     // Create tray icon
     let _tray_icon = TrayIconBuilder::new()
@@ -102,6 +109,9 @@ fn main() {
     let menu_receiver = MenuEvent::receiver();
     let tray_receiver = TrayIconEvent::receiver();
 
+    // Track when to reset copy button text
+    let mut copy_reset_time: Option<Instant> = None;
+
     // Main event loop
     info!("Entering main event loop");
     loop {
@@ -111,15 +121,35 @@ fn main() {
 
             match event.id().0.as_str() {
                 ID_COPY_CODE => {
-                    info!("Copy session code requested (placeholder)");
-                    // TODO: Implement actual copy functionality in integration plan
+                    if let Some(code) = &app_state.session_code {
+                        match arboard::Clipboard::new() {
+                            Ok(mut clipboard) => {
+                                if let Err(e) = clipboard.set_text(code.clone()) {
+                                    error!("Failed to set clipboard: {}", e);
+                                } else {
+                                    info!("Session code copied to clipboard: {}", code);
+
+                                    // Show confirmation by changing menu item text
+                                    app_state.copy_item.set_text("Copied!");
+                                    copy_reset_time =
+                                        Some(Instant::now() + Duration::from_secs(2));
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to access clipboard: {}", e);
+                            }
+                        }
+                    } else {
+                        warn!("Copy requested but no session code available");
+                    }
                 }
                 ID_LOGIN_ITEM => {
                     info!("Login item toggled (placeholder)");
                     // TODO: Implement login item functionality in Plan 05-05
                 }
                 ID_QUIT => {
-                    info!("Quit requested, exiting...");
+                    info!("Quit requested, shutting down...");
+                    let _ = bg_tx.send(BackgroundCommand::Shutdown);
                     break;
                 }
                 _ => {
@@ -133,9 +163,248 @@ fn main() {
             debug!("Tray event: {:?}", event);
         }
 
+        // Reset copy button text after 2 seconds
+        if let Some(reset_time) = copy_reset_time {
+            if Instant::now() >= reset_time {
+                app_state.copy_item.set_text("Copy Session Code");
+                copy_reset_time = None;
+            }
+        }
+
+        // Handle UI events from background
+        while let Ok(event) = ui_rx.try_recv() {
+            debug!("UI event: {:?}", event);
+
+            match event {
+                UiEvent::RelayConnected => {
+                    info!("Relay connected");
+                    app_state.relay_connected = true;
+                    app_state.update_status_display();
+                }
+                UiEvent::RelayDisconnected => {
+                    info!("Relay disconnected");
+                    app_state.relay_connected = false;
+                    app_state.session_code = None;
+                    app_state.update_status_display();
+                    app_state.update_code_display();
+                }
+                UiEvent::SessionCode(code) => {
+                    info!("Received session code: {}", code);
+                    app_state.session_code = Some(code);
+                    app_state.update_code_display();
+                }
+                UiEvent::BrowserConnected(browser_id) => {
+                    info!("Browser connected: {}", browser_id);
+                    app_state.browser_count += 1;
+                }
+                UiEvent::BrowserDisconnected(browser_id) => {
+                    info!("Browser disconnected: {}", browser_id);
+                    app_state.browser_count = app_state.browser_count.saturating_sub(1);
+                }
+                UiEvent::RelayError(msg) => {
+                    error!("Relay error: {}", msg);
+                }
+                UiEvent::ShellConnected { session_id, name } => {
+                    info!("Shell connected: {} ({})", name, session_id);
+                    app_state.shell_count += 1;
+                    app_state.update_count_display();
+                }
+                UiEvent::ShellDisconnected { session_id } => {
+                    info!("Shell disconnected: {}", session_id);
+                    app_state.shell_count = app_state.shell_count.saturating_sub(1);
+                    app_state.update_count_display();
+                }
+                UiEvent::ShellCountChanged(count) => {
+                    debug!("Shell count changed: {}", count);
+                    app_state.shell_count = count;
+                    app_state.update_count_display();
+                }
+                UiEvent::IpcError(msg) => {
+                    error!("IPC error: {}", msg);
+                }
+            }
+        }
+
         // Small sleep to avoid busy-waiting
         thread::sleep(Duration::from_millis(10));
     }
 
+    // Wait for background thread to finish
+    info!("Waiting for background thread to finish...");
+    if let Err(e) = bg_handle.join() {
+        error!("Background thread panicked: {:?}", e);
+    }
+
     info!("Application exiting");
+}
+
+/// Run background tasks (relay client and IPC server) on a Tokio runtime.
+fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<BackgroundCommand>) {
+    info!("Background thread starting");
+
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
+
+    rt.block_on(async {
+        // Get relay URL from env or default
+        let relay_url = std::env::var("RELAY_URL")
+            .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
+        info!("Using relay URL: {}", relay_url);
+
+        // Create channels for module events
+        let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
+        let (ipc_event_tx, ipc_event_rx) = mpsc::channel::<IpcEvent>();
+
+        // Create relay client
+        let mut relay = RelayClient::new(relay_url, relay_event_tx);
+
+        // Create IPC server
+        let mut ipc = match IpcServer::new(ipc_event_tx).await {
+            Ok(server) => server,
+            Err(e) => {
+                error!("Failed to create IPC server: {}", e);
+                let _ = ui_tx.send(UiEvent::IpcError(format!("Failed to start IPC: {}", e)));
+                // Continue without IPC - relay still works
+                return run_relay_only(relay, ui_tx, bg_rx).await;
+            }
+        };
+
+        // Spawn relay client task
+        let relay_handle = tokio::spawn(async move {
+            relay.run().await;
+        });
+
+        // Spawn IPC server task
+        let ipc_handle = tokio::spawn(async move {
+            ipc.run().await;
+        });
+
+        // Spawn event forwarding tasks
+        let ui_tx_relay = ui_tx.clone();
+        let relay_forward_handle = tokio::task::spawn_blocking(move || {
+            forward_relay_events(relay_event_rx, ui_tx_relay);
+        });
+
+        let ui_tx_ipc = ui_tx.clone();
+        let ipc_forward_handle = tokio::task::spawn_blocking(move || {
+            forward_ipc_events(ipc_event_rx, ui_tx_ipc);
+        });
+
+        // Wait for shutdown signal
+        loop {
+            match bg_rx.try_recv() {
+                Ok(BackgroundCommand::Shutdown) => {
+                    info!("Shutdown command received");
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // No command, continue
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    info!("Background command channel disconnected, shutting down");
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Abort tasks (they run forever, so we need to abort them)
+        relay_handle.abort();
+        ipc_handle.abort();
+        relay_forward_handle.abort();
+        ipc_forward_handle.abort();
+
+        info!("Background tasks shut down");
+    });
+
+    info!("Background thread exiting");
+}
+
+/// Run only the relay client (fallback if IPC fails to start).
+async fn run_relay_only(
+    _relay: RelayClient,
+    ui_tx: mpsc::Sender<UiEvent>,
+    bg_rx: mpsc::Receiver<BackgroundCommand>,
+) {
+    let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
+
+    // Create a new relay with the fresh channel
+    let relay_url = std::env::var("RELAY_URL")
+        .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
+    let mut relay = RelayClient::new(relay_url, relay_event_tx);
+
+    let relay_handle = tokio::spawn(async move {
+        relay.run().await;
+    });
+
+    let ui_tx_relay = ui_tx.clone();
+    let relay_forward_handle = tokio::task::spawn_blocking(move || {
+        forward_relay_events(relay_event_rx, ui_tx_relay);
+    });
+
+    // Wait for shutdown
+    loop {
+        match bg_rx.try_recv() {
+            Ok(BackgroundCommand::Shutdown) => break,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    relay_handle.abort();
+    relay_forward_handle.abort();
+}
+
+/// Forward relay events to the UI channel.
+fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+    loop {
+        match rx.recv() {
+            Ok(event) => {
+                let ui_event = match event {
+                    RelayEvent::Connected => UiEvent::RelayConnected,
+                    RelayEvent::Disconnected => UiEvent::RelayDisconnected,
+                    RelayEvent::SessionCode(code) => UiEvent::SessionCode(code),
+                    RelayEvent::BrowserConnected(id) => UiEvent::BrowserConnected(id),
+                    RelayEvent::BrowserDisconnected(id) => UiEvent::BrowserDisconnected(id),
+                    RelayEvent::Error(msg) => UiEvent::RelayError(msg),
+                };
+                if ui_tx.send(ui_event).is_err() {
+                    debug!("UI channel closed, stopping relay event forwarding");
+                    break;
+                }
+            }
+            Err(_) => {
+                debug!("Relay event channel closed");
+                break;
+            }
+        }
+    }
+}
+
+/// Forward IPC events to the UI channel.
+fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+    loop {
+        match rx.recv() {
+            Ok(event) => {
+                let ui_event = match event {
+                    IpcEvent::SessionConnected { session_id, name } => {
+                        UiEvent::ShellConnected { session_id, name }
+                    }
+                    IpcEvent::SessionDisconnected { session_id } => {
+                        UiEvent::ShellDisconnected { session_id }
+                    }
+                    IpcEvent::SessionCountChanged(count) => UiEvent::ShellCountChanged(count),
+                    IpcEvent::Error(msg) => UiEvent::IpcError(msg),
+                };
+                if ui_tx.send(ui_event).is_err() {
+                    debug!("UI channel closed, stopping IPC event forwarding");
+                    break;
+                }
+            }
+            Err(_) => {
+                debug!("IPC event channel closed");
+                break;
+            }
+        }
+    }
 }

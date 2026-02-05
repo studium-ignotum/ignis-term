@@ -98,6 +98,7 @@ Plans:
 **Goal**: Menu bar app coordinates local sessions with cloud relay
 **Depends on**: Phase 4
 **Requirements**: CLIENT-01, CLIENT-02, CLIENT-03, CLIENT-04, CLIENT-05, CLIENT-06, CLIENT-07, CLIENT-08, CLIENT-09, CLIENT-10, CLIENT-11, CLIENT-12, CLIENT-13
+**Plans:** 5 plans in 4 waves
 **Success Criteria** (what must be TRUE):
   1. App runs in menu bar only (no Dock icon visible)
   2. Click icon shows dropdown with session code, connection status, quit option
@@ -106,7 +107,11 @@ Plans:
   5. Terminal data from local sessions is forwarded to relay
 
 Plans:
-- [ ] 05-01-PLAN.md -- TBD
+- [ ] 05-01-PLAN.md -- Project foundation + tray skeleton (Wave 1)
+- [ ] 05-02-PLAN.md -- WebSocket client module (Wave 2)
+- [ ] 05-03-PLAN.md -- Unix socket + session tracking (Wave 2)
+- [ ] 05-04-PLAN.md -- Full integration (Wave 3)
+- [ ] 05-05-PLAN.md -- App bundle + login items + verification (Wave 4)
 
 ### Phase 6: Shell Integration (v2.0)
 **Goal**: Any shell session can connect to mac-client for remote access
@@ -147,10 +152,10 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 2. Terminal & iTerm2 Integration | 5/5 | Complete | 2026-02-05 |
 | 3. Performance & Reliability | - | Deferred | - |
 | 4. Relay Server | 4/4 | Complete | 2026-02-06 |
-| 5. Mac Client | 0/? | Not started | - |
+| 5. Mac Client | 0/5 | Ready | - |
 | 6. Shell Integration | 0/? | Not started | - |
 | 7. Web UI & Full Pipeline | 0/? | Not started | - |
 
 ---
 *Created: 2026-02-04*
-*Last updated: 2026-02-06 (Phase 4 complete)*
+*Last updated: 2026-02-06 (Phase 5 planned)*

@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 5 - Mac Client (3/6 plans complete)
-Plan: 03 complete
+Phase: 5 - Mac Client (4/6 plans complete)
+Plan: 04 complete
 Status: In progress
-Last activity: 2026-02-05 -- Completed 05-03-PLAN.md (IPC Module)
+Last activity: 2026-02-05 -- Completed 05-04-PLAN.md (Integration)
 
-Progress: [#####-----] 50% (phase 5)
+Progress: [######----] 67% (phase 5)
 
 ## v2.0 Overview
 
@@ -23,7 +23,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
 | 4 | Relay Server | 5 (RELAY) | COMPLETE (4/4 plans) |
-| 5 | Mac Client | 13 (CLIENT) | In progress (3/6 plans) |
+| 5 | Mac Client | 13 (CLIENT) | In progress (4/6 plans) |
 | 6 | Shell Integration | 9 (SHELL) | Blocked by Phase 5 |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | Blocked by Phase 6 |
 
@@ -79,6 +79,10 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | IPC socket at /tmp/terminal-remote.sock | Standard temp dir, discoverable by shell integration | 05-03 |
 | Stale socket cleanup on startup | Prevents address-in-use after unclean shutdown | 05-03 |
 | JSON shell registration format | name/shell/pid fields for UI display and debugging | 05-03 |
+| spawn_blocking for event forwarding | Bridges async Tokio with sync main thread mpsc | 05-04 |
+| AppState holds MenuItem refs | Allows set_text() calls for dynamic menu updates | 05-04 |
+| 2-second Copied! feedback | Polling reset in event loop, simple implementation | 05-04 |
+| BackgroundCommand::Shutdown | Graceful shutdown via channel signaling | 05-04 |
 
 ### v2.0 Stack (from research)
 
@@ -107,6 +111,6 @@ None -- relay server foundation established.
 
 ## Session Continuity
 
-Last session: 2026-02-05T21:30:04Z
-Stopped at: Completed 05-03-PLAN.md (IPC Module)
-Resume file: .planning/phases/05-mac-client/05-04-PLAN.md
+Last session: 2026-02-05T21:36:38Z
+Stopped at: Completed 05-04-PLAN.md (Integration)
+Resume file: .planning/phases/05-mac-client/05-05-PLAN.md

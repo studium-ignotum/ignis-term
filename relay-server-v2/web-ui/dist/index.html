@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Remote</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Terminal Remote</h1>
+        <p class="status">Relay Server v2.0</p>
+
+        <div class="connect-form">
+            <label for="session-code">Session Code:</label>
+            <input type="text" id="session-code" placeholder="ABC123" maxlength="6" autocomplete="off">
+            <button id="connect-btn">Connect</button>
+        </div>
+
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        // Placeholder - real WebSocket connection in Phase 7
+        document.getElementById('connect-btn').addEventListener('click', () => {
+            const code = document.getElementById('session-code').value.toUpperCase();
+            const msg = document.getElementById('message');
+            if (code.length !== 6) {
+                msg.textContent = 'Session code must be 6 characters';
+                msg.className = 'message error';
+            } else {
+                msg.textContent = 'WebSocket connection not yet implemented (Phase 7)';
+                msg.className = 'message info';
+            }
+        });
+    </script>
+</body>
+</html>

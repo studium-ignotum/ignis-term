@@ -1,15 +1,18 @@
+mod assets;
 mod protocol;
 mod session;
 mod state;
 
 use axum::{extract::State, routing::get, Router};
+use axum_embed::ServeEmbed;
 use std::net::SocketAddr;
 use tracing::info;
 
+use crate::assets::Assets;
 use crate::state::AppState;
 
-async fn root() -> &'static str {
-    "Relay Server v2"
+async fn ws_handler_placeholder() -> &'static str {
+    "WebSocket endpoint - not yet implemented"
 }
 
 async fn debug_sessions(State(state): State<AppState>) -> String {
@@ -30,10 +33,19 @@ async fn main() {
     // Create application state
     let state = AppState::new();
 
+    // Create embedded asset server with SPA fallback
+    // First param: index file for "/" route, Second: fallback behavior for unknown paths
+    let serve_assets = ServeEmbed::<Assets>::with_parameters(
+        Some("index.html".to_owned()),
+        axum_embed::FallbackBehavior::Ok,
+        None,
+    );
+
     // Build router
     let app = Router::new()
-        .route("/", get(root))
+        .route("/ws", get(ws_handler_placeholder))
         .route("/debug/sessions", get(debug_sessions))
+        .fallback_service(serve_assets)
         .with_state(state);
 
     // Bind and serve

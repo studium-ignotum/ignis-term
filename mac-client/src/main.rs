@@ -5,9 +5,10 @@
 
 use image::ImageReader;
 use mac_client::app::{AppState, BackgroundCommand, UiEvent};
-use mac_client::ipc::{IpcEvent, IpcServer};
+use mac_client::ipc::{IpcCommand, IpcEvent, IpcServer};
 use mac_client::relay::{RelayClient, RelayCommand, RelayEvent};
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use smappservice_rs::{AppService, ServiceStatus, ServiceType};
 use std::io::Cursor;
 use std::sync::mpsc;
 use std::thread;
@@ -63,7 +64,13 @@ fn main() {
 
     // Action items
     let copy_code_item = MenuItem::with_id(ID_COPY_CODE, "Copy Session Code", true, None);
-    let login_item = CheckMenuItem::with_id(ID_LOGIN_ITEM, "Start at Login", true, false, None);
+
+    // Check current login item status and set initial checkbox state
+    let is_login_enabled = is_login_item_enabled();
+    let login_item =
+        CheckMenuItem::with_id(ID_LOGIN_ITEM, "Start at Login", true, is_login_enabled, None);
+    debug!("Login item initial state: {}", is_login_enabled);
+
     let quit_item = MenuItem::with_id(ID_QUIT, "Quit", true, None);
 
     // Assemble menu
@@ -144,8 +151,31 @@ fn main() {
                     }
                 }
                 ID_LOGIN_ITEM => {
-                    info!("Login item toggled (placeholder)");
-                    // TODO: Implement login item functionality in Plan 05-05
+                    // Toggle login item registration
+                    let current = login_item.is_checked();
+                    let new_state = !current;
+
+                    match configure_login_item(new_state) {
+                        Ok(()) => {
+                            login_item.set_checked(new_state);
+                            info!(
+                                "Login item {}: {}",
+                                if new_state {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                },
+                                new_state
+                            );
+                        }
+                        Err(e) => {
+                            // Keep checkbox in original state on failure
+                            error!("Failed to configure login item: {}", e);
+                            warn!(
+                                "Login item registration may require running from a proper .app bundle"
+                            );
+                        }
+                    }
                 }
                 ID_QUIT => {
                     info!("Quit requested, shutting down...");
@@ -254,6 +284,41 @@ fn main() {
     info!("Application exiting");
 }
 
+/// Check if the app is currently registered as a login item.
+///
+/// Returns true if enabled, false otherwise (not registered, requires approval, or not found).
+fn is_login_item_enabled() -> bool {
+    let service = AppService::new(ServiceType::MainApp);
+    matches!(service.status(), ServiceStatus::Enabled)
+}
+
+/// Configure the app as a login item (register or unregister).
+///
+/// This uses SMAppService which requires:
+/// - macOS 13.0+
+/// - App must be properly signed and bundled
+/// - May require user approval in System Settings > Login Items
+fn configure_login_item(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let service = AppService::new(ServiceType::MainApp);
+
+    if enable {
+        service.register()?;
+        info!("Registered as login item");
+
+        // Check if user approval is needed
+        if matches!(service.status(), ServiceStatus::RequiresApproval) {
+            info!("Login item requires user approval in System Settings > Login Items");
+            // Optionally open System Settings
+            AppService::open_system_settings_login_items();
+        }
+    } else {
+        service.unregister()?;
+        info!("Unregistered as login item");
+    }
+
+    Ok(())
+}
+
 /// Run background tasks (relay client and IPC server) on a Tokio runtime.
 fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<BackgroundCommand>) {
     info!("Background thread starting");
@@ -270,17 +335,19 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
         let (ipc_event_tx, ipc_event_rx) = mpsc::channel::<IpcEvent>();
 
-        // Create command channel for sending data to relay
+        // Create command channels for sending data to relay and IPC
         let (relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
+        let (ipc_cmd_tx, ipc_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<IpcCommand>();
 
         // Create relay client
         let mut relay = RelayClient::new(relay_url, relay_event_tx, relay_cmd_rx);
 
-        // Store command sender for use by IPC data forwarding
+        // Store command senders for use by data forwarding (Task 3 will wire these up)
         let _relay_cmd_tx = relay_cmd_tx;
+        let _ipc_cmd_tx = ipc_cmd_tx;
 
         // Create IPC server
-        let mut ipc = match IpcServer::new(ipc_event_tx).await {
+        let mut ipc = match IpcServer::new(ipc_event_tx, ipc_cmd_rx).await {
             Ok(server) => server,
             Err(e) => {
                 error!("Failed to create IPC server: {}", e);
@@ -445,6 +512,9 @@ fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>
                         UiEvent::ShellDisconnected { session_id }
                     }
                     IpcEvent::SessionCountChanged(count) => UiEvent::ShellCountChanged(count),
+                    IpcEvent::TerminalData { session_id, data } => {
+                        UiEvent::TerminalDataFromShell { session_id, data }
+                    }
                     IpcEvent::Error(msg) => UiEvent::IpcError(msg),
                 };
                 if ui_tx.send(ui_event).is_err() {

@@ -1,0 +1,19 @@
+[package]
+name = "relay-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+rust-embed = { version = "8.11", features = ["compression"] }
+axum-embed = "0.1"
+nanoid = "0.4"
+dashmap = "6"
+tokio-util = { version = "0.7", features = ["time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+futures-util = "0.3"

@@ -1,62 +1,76 @@
-# iTerm2 Remote
+# Terminal Remote
 
 ## What This Is
 
-A web-based remote control for iTerm2 that lets you access your Mac's terminal sessions from any browser, anywhere. Your Mac connects to a cloud relay server, and you connect to the same server from your iPad, laptop, or phone to see and interact with all your open iTerm2 tabs as if you were sitting at your desk.
+A universal remote terminal control system that lets you access any terminal session on your Mac from any browser, anywhere. A lightweight menu bar app auto-connects your shell sessions (via shell integration), streams them through a cloud relay, and a web UI lets you view and control everything from your iPad, laptop, or phone — regardless of which terminal app you're using.
 
 ## Core Value
 
-Full terminal experience remotely — if it works in iTerm2, it should work in the browser.
+Control any terminal session from anywhere — works with iTerm2, VS Code, Zed, JetBrains, Terminal.app, anything.
+
+## Current Milestone: v2.0 Rust Rewrite
+
+**Goal:** Rewrite in Rust for performance and single-binary distribution, with universal terminal support via shell integration.
+
+**Target features:**
+- Mac client as Rust menu bar app (single binary)
+- Relay server in Rust with embedded web UI
+- Shell integration that works with any terminal app
+- Zero runtime dependencies
 
 ## Requirements
 
 ### Validated
 
-(None yet — rebuild from scratch)
+v1.0 implementation (Node.js/SvelteKit) validated:
+- ✓ WebSocket relay architecture works
+- ✓ Session code authentication flow
+- ✓ xterm.js terminal emulation
+- ✓ Real-time bidirectional I/O
+- ✓ iTerm2 coprocess integration (limited to iTerm2)
 
 ### Active
 
-- [ ] Mac client connects to cloud relay and streams terminal state
-- [ ] Web dashboard shows all open iTerm2 tabs
-- [ ] Switch between tabs in browser
-- [ ] Full terminal emulation (colors, scrollback, cursor)
-- [ ] Real-time bidirectional input/output
-- [ ] Session code authentication (generated on Mac, entered in browser)
-- [ ] Reliable WebSocket connections with auto-reconnect
-- [ ] Clean, responsive UI that works on iPad
+- [ ] Rust mac-client with menu bar UI
+- [ ] Rust relay-server with embedded web UI
+- [ ] Shell integration for universal terminal support
+- [ ] Single binary distribution (no Python/Node.js)
+- [ ] Auto-connect any terminal session when mac-client running
 
 ### Out of Scope
 
 - User accounts / multi-user — single user, session codes only
-- Creating new terminal sessions from browser — view/control existing only
 - Mobile native apps — web only
 - Local-only mode — always uses cloud relay
+- Per-terminal adapters — shell integration is universal approach
 
 ## Context
 
-**Existing codebase:** Previous implementation exists but has fundamental issues with connection stability, terminal rendering, and auth flow. This is a rebuild keeping the tech stack (SvelteKit, WebSocket, Node.js) but rewriting the implementation.
+**v1.0 implementation:** Working prototype in Node.js/SvelteKit with iTerm2-specific coprocess integration. Validates the architecture but limited to one terminal app and requires Node.js runtime.
 
-**Architecture:** Mac → Cloud Relay ← Browser. The cloud relay is a separate deployment that the user already has. This project builds both the Mac client and the web dashboard/relay server.
+**v2.0 approach:** Rust rewrite with shell integration. Instead of per-terminal APIs, inject at shell level — one line in .zshrc auto-connects any session when mac-client is running.
 
-**Terminal emulation:** Use xterm.js for proper terminal rendering in the browser. Need to handle ANSI escape codes, colors, cursor positioning, scrollback.
+**Architecture:** Mac (menu bar app) → Cloud Relay (Rust, serves web UI) ← Browser. Shell integration script in .zshrc connects sessions to mac-client via Unix socket.
 
-**iTerm2 integration:** Use iTerm2's Python API or AppleScript to capture terminal content and inject input.
+**Terminal emulation:** Keep xterm.js for browser-side rendering. Bundled as static assets in Rust relay binary.
 
 ## Constraints
 
-- **Tech stack**: SvelteKit + Node.js + WebSocket (user preference)
-- **Terminal lib**: xterm.js for browser-side terminal emulation
+- **Tech stack**: Rust for mac-client and relay-server
+- **Terminal lib**: xterm.js bundled as static assets
 - **Auth model**: Session codes only, no user accounts
-- **Deployment**: Cloud relay on user's existing server
+- **Shell**: Zsh (user's shell), integration script in .zshrc
+- **Distribution**: Single binary per component, no runtime dependencies
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Full rebuild vs incremental fix | Current implementation too buggy, easier to start fresh | — Pending |
-| xterm.js for terminal | Industry standard, handles all terminal emulation complexity | — Pending |
-| Session codes over passwords | Simpler than accounts, secure enough for single-user | — Pending |
-| Cloud relay architecture | Avoids NAT/firewall issues, works from anywhere | — Pending |
+| Rust rewrite | Performance + single binary distribution | — Pending |
+| Shell integration over terminal adapters | Universal approach, works with any terminal app | — Pending |
+| Menu bar app | Lightweight, always accessible, shows session code | — Pending |
+| Embedded web UI | Single relay binary serves everything | — Pending |
+| Keep xterm.js | Proven terminal emulation, bundle as static assets | — Pending |
 
 ---
-*Last updated: 2026-02-04 after initialization*
+*Last updated: 2026-02-06 after v2.0 milestone start*

@@ -2,64 +2,46 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-04)
+See: .planning/PROJECT.md (updated 2026-02-06)
 
-**Core value:** Full terminal experience remotely - if it works in iTerm2, it should work in the browser
-**Current focus:** Phase 3 - Performance & Reliability
+**Core value:** Control any terminal session from anywhere — works with any terminal app
+**Current focus:** Milestone v2.0 - Rust Rewrite
 
 ## Current Position
 
-Phase: 3 of 3 (Performance & Reliability)
-Plan: 0 of ? in current phase
-Status: Not started
-Last activity: 2026-02-05 - Completed Phase 2
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-06 — Milestone v2.0 started
 
-Progress: [########=-] 89%
+Progress: [----------] 0%
 
-## Performance Metrics
+## v1.0 Summary (Node.js/SvelteKit)
 
-**Velocity:**
-- Total plans completed: 8
-- Average duration: 4 min
-- Total execution time: ~0.5 hours
+Completed phases 1-2 (connection, auth, terminal, iTerm2 integration).
+Phase 3 (performance) deferred — starting v2.0 Rust rewrite instead.
 
-**By Phase:**
+**What worked:**
+- WebSocket relay architecture
+- Session code authentication
+- xterm.js terminal emulation
+- Real-time bidirectional I/O
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1. Connection & Auth | 3 | 14 min | 5 min |
-| 2. Terminal & iTerm2 | 5 | 20 min | 4 min |
-| 3. Performance | - | - | - |
-
-*Updated after each plan completion*
+**What's changing:**
+- Node.js → Rust (performance, single binary)
+- iTerm2-only → Universal (shell integration)
+- Separate web app → Embedded in relay
 
 ## Accumulated Context
 
-### Decisions
+### v1.0 Decisions (may inform v2.0)
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-| Decision | Rationale | Plan |
-|----------|-----------|------|
-| 6-char session codes with nolookalikes alphabet | Balance human-typeable and collision-resistant (~1B combinations) | 01-01 |
-| 5-minute code expiry, infinite once paired | Codes expire unused but last forever once connected | 01-01 |
-| Zod discriminated unions for protocol | Compile-time + runtime safety for WebSocket messages | 01-01 |
-| State machine for connection lifecycle | Validates transitions, prevents invalid state jumps | 01-02 |
-| Exponential backoff 1s/2x/30s max with 10% jitter | Balance quick recovery with server protection | 01-02 |
-| Svelte 5 runes for reactive state | Modern reactive patterns with $state/$derived/$effect | 01-03 |
-| reconnecting-websocket for auto-reconnect | Exponential backoff 1s-30s, max 10 retries | 01-03 |
-| Default passthrough routing in relay | All new message types are pure relay - Zod validates, forward raw JSON | 02-01 |
-| JSON lines over Unix domain socket for IPC | Simple, debuggable protocol for Python-to-Node.js bridge communication | 02-02 |
-| One coprocess socket per session | Avoids multiplexing complexity in coprocess shell script | 02-02 |
-| Base64 encoding for terminal data | Raw PTY bytes may contain non-UTF-8, safe for JSON transport | 02-02 |
-| fileURLToPath for ESM dirname | tsconfig bundler moduleResolution lacks import.meta.dirname types | 02-03 |
-| Import addon types from xterm-svelte re-exports | pnpm virtual store prevents direct @xterm/* type imports | 02-04 |
-| Terminal.svelte exports write/getTerminal/fit | Store needs to write data to specific terminal instances | 02-04 |
-| Sticky modifiers for mobile control bar | Tap-once Ctrl/Alt for better touch UX | 02-05 |
-| SSR disabled globally | SvelteKit 2.50 + Svelte 5 + Vite 6 CSS bug; terminal app has no SSR benefit | 02-05 fix |
-| Python venv for mac-client deps | macOS Homebrew Python blocks pip install (PEP 668) | 02-05 fix |
-| .svelte.ts for rune-enabled stores | Svelte 5 $state only available in .svelte and .svelte.ts files | 02-05 fix |
+| Decision | Rationale | Applies to v2.0? |
+|----------|-----------|------------------|
+| 6-char session codes | Human-typeable, collision-resistant | ✓ Keep |
+| xterm.js for terminal | Industry standard | ✓ Keep (bundle as static) |
+| Session codes over passwords | Simple, secure enough | ✓ Keep |
+| WebSocket relay | NAT traversal, works anywhere | ✓ Keep |
 
 ### Pending Todos
 
@@ -67,11 +49,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- socat not installed on system; coprocess script falls back to nc. Recommend `brew install socat` for production use.
-- iTerm2 resize: Mac bridge receives resize messages but doesn't resize iTerm2 PTY (design limitation — iTerm2 controls PTY size based on session display area).
+None yet — fresh start with Rust.
 
 ## Session Continuity
 
-Last session: 2026-02-05
-Stopped at: Completed Phase 2, ready for Phase 3
+Last session: 2026-02-06
+Stopped at: Defining v2.0 milestone requirements
 Resume file: None

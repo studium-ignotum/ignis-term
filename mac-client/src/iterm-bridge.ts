@@ -9,19 +9,19 @@
  * Auto-restarts the Python subprocess on crash.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
-import { createConnection, type Socket } from 'net';
-import { EventEmitter } from 'events';
-import { fileURLToPath } from 'url';
-import * as path from 'path';
-import * as fs from 'fs';
+import { spawn, type ChildProcess } from "child_process";
+import { createConnection, type Socket } from "net";
+import { EventEmitter } from "events";
+import { fileURLToPath } from "url";
+import * as path from "path";
+import * as fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SOCKET_PATH = '/tmp/iterm-bridge.sock';
-const PYTHON_SCRIPT = path.join(__dirname, '..', 'iterm-bridge.py');
-const VENV_PYTHON = path.join(__dirname, '..', '.venv', 'bin', 'python3');
+const SOCKET_PATH = "/tmp/iterm-bridge.sock";
+const PYTHON_SCRIPT = path.join(__dirname, "..", "iterm-bridge.py");
+const VENV_PYTHON = path.join(__dirname, "..", ".venv", "bin", "python3");
 const RESTART_DELAY_MS = 3000;
 const MAX_CONNECT_RETRIES = 10;
 const CONNECT_RETRY_DELAY_MS = 500;
@@ -34,20 +34,20 @@ export interface SessionInfo {
 }
 
 export interface BridgeEvents {
-  'terminal_data': (sessionId: string, data: Buffer) => void;
-  'sessions': (sessions: SessionInfo[]) => void;
-  'tab_switched': (tabId: string) => void;
-  'tabs_changed': (tabs: SessionInfo[]) => void;
-  'config': (config: Record<string, unknown>) => void;
-  'ready': () => void;
-  'error': (error: Error) => void;
-  'exit': (code: number | null) => void;
+  terminal_data: (sessionId: string, data: Buffer, msgType?: string) => void;
+  sessions: (sessions: SessionInfo[]) => void;
+  tab_switched: (tabId: string, sessionId?: string) => void;
+  tabs_changed: (tabs: SessionInfo[]) => void;
+  config: (config: Record<string, unknown>) => void;
+  ready: () => void;
+  error: (error: Error) => void;
+  exit: (code: number | null) => void;
 }
 
 export class ITerm2Bridge extends EventEmitter {
   private process: ChildProcess | null = null;
   private socket: Socket | null = null;
-  private buffer: string = '';
+  private buffer: string = "";
   private running = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -58,57 +58,66 @@ export class ITerm2Bridge extends EventEmitter {
     this.running = true;
 
     // Verify Python script exists
+    console.log(`[iTerm2Bridge] Resolved script path: ${PYTHON_SCRIPT}`);
     if (!fs.existsSync(PYTHON_SCRIPT)) {
       throw new Error(
         `Python bridge script not found: ${PYTHON_SCRIPT}\n` +
-        'Ensure iterm-bridge.py is in the mac-client directory.'
+          "Ensure iterm-bridge.py is in the mac-client directory.",
       );
     }
 
     // Clean up stale socket file
-    try { fs.unlinkSync(SOCKET_PATH); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(SOCKET_PATH);
+    } catch {
+      /* ignore */
+    }
 
     // Use venv Python if available, fall back to system python3
-    const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
+    const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python3";
     console.log(`[iTerm2Bridge] Using Python: ${pythonBin}`);
 
     // Launch Python subprocess
     this.process = spawn(pythonBin, [PYTHON_SCRIPT, SOCKET_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
-    this.process.stdout?.on('data', (data: Buffer) => {
-      console.log('[iTerm2Bridge] Python stdout:', data.toString().trim());
+    this.process.stdout?.on("data", (data: Buffer) => {
+      console.log("[iTerm2Bridge] Python stdout:", data.toString().trim());
     });
 
-    this.process.stderr?.on('data', (data: Buffer) => {
+    this.process.stderr?.on("data", (data: Buffer) => {
       const msg = data.toString().trim();
       // Check for missing iterm2 package
-      if (msg.includes('ModuleNotFoundError') && msg.includes('iterm2')) {
+      if (msg.includes("ModuleNotFoundError") && msg.includes("iterm2")) {
         console.error(
-          '[iTerm2Bridge] Python iterm2 package not installed.\n' +
-          'Install it with: cd mac-client && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt'
+          "[iTerm2Bridge] Python iterm2 package not installed.\n" +
+            "Install it with: cd mac-client && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
         );
       }
-      console.error('[iTerm2Bridge] Python stderr:', msg);
+      console.error("[iTerm2Bridge] Python stderr:", msg);
     });
 
-    this.process.on('exit', (code) => {
+    this.process.on("exit", (code) => {
       console.log(`[iTerm2Bridge] Python process exited with code ${code}`);
       this.socket?.destroy();
       this.socket = null;
       this.process = null;
-      this.emit('exit', code);
+      this.emit("exit", code);
 
       // Auto-restart if still supposed to be running
       if (this.running) {
         console.log(`[iTerm2Bridge] Restarting in ${RESTART_DELAY_MS}ms...`);
         this.restartTimer = setTimeout(() => {
           this.restartTimer = null;
-          if (this.running) this.start().catch((err) => {
-            console.error('[iTerm2Bridge] Restart failed:', err);
-            this.emit('error', err instanceof Error ? err : new Error(String(err)));
-          });
+          if (this.running)
+            this.start().catch((err) => {
+              console.error("[iTerm2Bridge] Restart failed:", err);
+              this.emit(
+                "error",
+                err instanceof Error ? err : new Error(String(err)),
+              );
+            });
         }, RESTART_DELAY_MS);
       }
     });
@@ -129,15 +138,15 @@ export class ITerm2Bridge extends EventEmitter {
             this.setupSocketHandlers();
             resolve();
           });
-          socket.on('error', reject);
+          socket.on("error", reject);
         });
-        console.log('[iTerm2Bridge] Connected to Python bridge socket');
+        console.log("[iTerm2Bridge] Connected to Python bridge socket");
         return;
       } catch {
-        await new Promise(r => setTimeout(r, CONNECT_RETRY_DELAY_MS));
+        await new Promise((r) => setTimeout(r, CONNECT_RETRY_DELAY_MS));
       }
     }
-    throw new Error('Failed to connect to Python bridge socket after retries');
+    throw new Error("Failed to connect to Python bridge socket after retries");
   }
 
   /**
@@ -146,11 +155,11 @@ export class ITerm2Bridge extends EventEmitter {
   private setupSocketHandlers(): void {
     if (!this.socket) return;
 
-    this.socket.on('data', (data: Buffer) => {
-      this.buffer += data.toString('utf-8');
+    this.socket.on("data", (data: Buffer) => {
+      this.buffer += data.toString("utf-8");
       // JSON lines protocol: split on newlines
       let newlineIndex: number;
-      while ((newlineIndex = this.buffer.indexOf('\n')) !== -1) {
+      while ((newlineIndex = this.buffer.indexOf("\n")) !== -1) {
         const line = this.buffer.slice(0, newlineIndex);
         this.buffer = this.buffer.slice(newlineIndex + 1);
         if (line.trim()) {
@@ -158,20 +167,20 @@ export class ITerm2Bridge extends EventEmitter {
             const msg = JSON.parse(line);
             this.handleMessage(msg);
           } catch {
-            console.error('[iTerm2Bridge] Failed to parse message:', line);
+            console.error("[iTerm2Bridge] Failed to parse message:", line);
           }
         }
       }
     });
 
-    this.socket.on('close', () => {
-      console.log('[iTerm2Bridge] Socket closed');
+    this.socket.on("close", () => {
+      console.log("[iTerm2Bridge] Socket closed");
       this.socket = null;
     });
 
-    this.socket.on('error', (err: Error) => {
-      console.error('[iTerm2Bridge] Socket error:', err.message);
-      this.emit('error', err);
+    this.socket.on("error", (err: Error) => {
+      console.error("[iTerm2Bridge] Socket error:", err.message);
+      this.emit("error", err);
     });
   }
 
@@ -180,32 +189,38 @@ export class ITerm2Bridge extends EventEmitter {
    */
   private handleMessage(msg: Record<string, unknown>): void {
     switch (msg.type) {
-      case 'terminal_data': {
+      case "terminal_data":
+      case "initial_terminal_data": {
         // Decode base64 terminal data
-        const termData = Buffer.from(msg.data as string, 'base64');
-        this.emit('terminal_data', msg.session_id as string, termData);
+        const termData = Buffer.from(msg.data as string, "base64");
+        // Emit as the original message type for proper routing
+        this.emit("terminal_data", msg.session_id as string, termData, msg.type);
         break;
       }
-      case 'sessions':
-        this.emit('sessions', msg.sessions as SessionInfo[]);
+      case "sessions":
+        this.emit("sessions", msg.sessions as SessionInfo[]);
         break;
-      case 'tab_switched':
-        this.emit('tab_switched', msg.tab_id as string);
+      case "tab_switched":
+        this.emit(
+          "tab_switched",
+          msg.tab_id as string,
+          msg.session_id as string | undefined,
+        );
         break;
-      case 'tabs_changed':
-        this.emit('tabs_changed', msg.tabs as SessionInfo[]);
+      case "tabs_changed":
+        this.emit("tabs_changed", msg.tabs as SessionInfo[]);
         break;
-      case 'config':
-        this.emit('config', msg);
+      case "config":
+        this.emit("config", msg);
         break;
-      case 'ready':
-        this.emit('ready');
+      case "ready":
+        this.emit("ready");
         break;
-      case 'error':
-        this.emit('error', new Error(msg.message as string));
+      case "error":
+        this.emit("error", new Error(msg.message as string));
         break;
       default:
-        console.warn('[iTerm2Bridge] Unknown message type:', msg.type);
+        console.warn("[iTerm2Bridge] Unknown message type:", msg.type);
     }
   }
 
@@ -214,7 +229,7 @@ export class ITerm2Bridge extends EventEmitter {
    */
   send(msg: Record<string, unknown>): void {
     if (this.socket && !this.socket.destroyed) {
-      const line = JSON.stringify(msg) + '\n';
+      const line = JSON.stringify(msg) + "\n";
       this.socket.write(line);
     }
   }
@@ -224,9 +239,9 @@ export class ITerm2Bridge extends EventEmitter {
    */
   sendInput(sessionId: string, data: string): void {
     this.send({
-      type: 'terminal_input',
+      type: "terminal_input",
       session_id: sessionId,
-      data: Buffer.from(data).toString('base64'),
+      data: Buffer.from(data).toString("base64"),
     });
   }
 
@@ -235,7 +250,7 @@ export class ITerm2Bridge extends EventEmitter {
    */
   sendResize(sessionId: string, cols: number, rows: number): void {
     this.send({
-      type: 'terminal_resize',
+      type: "terminal_resize",
       session_id: sessionId,
       cols,
       rows,
@@ -246,21 +261,36 @@ export class ITerm2Bridge extends EventEmitter {
    * Request tab switch.
    */
   switchTab(tabId: string): void {
-    this.send({ type: 'tab_switch', tab_id: tabId });
+    this.send({ type: "tab_switch", tab_id: tabId });
   }
 
   /**
    * Request new tab creation.
    */
   createTab(): void {
-    this.send({ type: 'tab_create' });
+    this.send({ type: "tab_create" });
   }
 
   /**
    * Request tab close.
    */
   closeTab(tabId: string): void {
-    this.send({ type: 'tab_close', tab_id: tabId });
+    this.send({ type: "tab_close", tab_id: tabId });
+  }
+
+  /**
+   * Request screen content refresh for a session.
+   */
+  requestScreenRefresh(sessionId?: string): void {
+    this.send({ type: "request_screen_refresh", session_id: sessionId });
+  }
+
+  /**
+   * Request full state resend (sessions, config, screen content).
+   * Used when browser reconnects.
+   */
+  resendInitialState(): void {
+    this.send({ type: "resend_initial_state" });
   }
 
   /**
@@ -279,11 +309,15 @@ export class ITerm2Bridge extends EventEmitter {
     this.socket = null;
 
     if (this.process) {
-      this.process.kill('SIGTERM');
+      this.process.kill("SIGTERM");
       this.process = null;
     }
 
     // Clean up socket file
-    try { fs.unlinkSync(SOCKET_PATH); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(SOCKET_PATH);
+    } catch {
+      /* ignore */
+    }
   }
 }

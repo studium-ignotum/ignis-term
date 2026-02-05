@@ -31,11 +31,11 @@ fi
 # Wait briefly for the Python bridge to set up the socket server.
 # The bridge creates the socket before launching us, but there is a
 # small race window for the listen backlog to be ready.
-sleep 0.1
+sleep 0.2
 
 # Retry connection a few times in case the socket isn't ready yet
-MAX_RETRIES=5
-RETRY_DELAY=0.2
+MAX_RETRIES=15
+RETRY_DELAY=0.3
 
 connect_with_retry() {
     local attempt=0
@@ -46,7 +46,8 @@ connect_with_retry() {
         attempt=$((attempt + 1))
         sleep "$RETRY_DELAY"
     done
-    echo "Error: socket $SOCKET_PATH not found after $MAX_RETRIES retries" >&2
+    # Exit silently - this happens when mac-client restarts and old coprocesses
+    # are still running. The Python bridge will terminate us and start fresh.
     return 1
 }
 
@@ -77,27 +78,72 @@ fi
 if command -v socat &>/dev/null; then
     exec socat - "UNIX-CONNECT:${SOCKET_PATH}"
 else
-    # Fallback: use nc (netcat) with a named pipe for bidirectional communication.
-    # This is less reliable than socat but works on stock macOS.
-    if command -v nc &>/dev/null; then
-        FIFO="/tmp/iterm-coprocess-fifo-$$"
-        rm -f "$FIFO"
-        mkfifo "$FIFO"
+    # Fallback: Use Python for robust, unbuffered bidirectional communication.
+    # This avoids issues with cat buffering, nc behavior differences, and pipe management.
+    # checking for python3 or python availability
+    PYTHON_CMD=""
+    if command -v python3 &>/dev/null; then
+        PYTHON_CMD="python3"
+    elif command -v python &>/dev/null; then
+        PYTHON_CMD="python"
+    fi
 
-        # Background: read from socket via nc, write to stdout (-> iTerm2 keyboard input)
-        nc -U "$SOCKET_PATH" < "$FIFO" &
-        NC_PID=$!
+    if [ -n "$PYTHON_CMD" ]; then
+        exec "$PYTHON_CMD" -u -c '
+import sys
+import socket
+import select
+import os
+import signal
 
-        # Foreground: read from stdin (PTY output), write to nc via fifo (-> socket)
-        cat > "$FIFO"
+socket_path = sys.argv[1]
 
-        # When cat exits (stdin closed), clean up nc
-        kill "$NC_PID" 2>/dev/null || true
-        wait "$NC_PID" 2>/dev/null || true
-        rm -f "$FIFO"
+def cleanup(signum, frame):
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGINT, cleanup)
+
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(socket_path)
+        
+        # Set non-blocking mode for select
+        s.setblocking(0)
+        
+        # Standard input is file descriptor 0
+        # Standard output is file descriptor 1
+        
+        # Loop to relay data
+        while True:
+            # Watch for input from stdin (0) and socket (s)
+            r, _, _ = select.select([0, s], [], [])
+            
+            for fd in r:
+                if fd == 0:
+                    # Stdin -> Socket
+                    try:
+                        data = os.read(0, 4096)
+                        if not data:
+                            sys.exit(0) # EOF
+                        s.sendall(data)
+                    except OSError:
+                        sys.exit(0)
+                elif fd == s:
+                    # Socket -> Stdout
+                    try:
+                        data = s.recv(4096)
+                        if not data:
+                            sys.exit(0) # Remote closed
+                        os.write(1, data)
+                    except OSError:
+                        sys.exit(0)
+except Exception as e:
+    # Fail silently to avoid spamming terminal output
+    sys.exit(1)
+' "$SOCKET_PATH"
     else
-        echo "Error: socat or nc required for coprocess bridge" >&2
-        echo "Install socat: brew install socat" >&2
+        echo "Error: socat or python required for coprocess bridge" >&2
         exit 1
     fi
 fi

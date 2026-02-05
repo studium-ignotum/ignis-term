@@ -1,0 +1,71 @@
+.mobile-control-bar {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-secondary, #1a1a1a);
+  border-top: 1px solid var(--border, #333);
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px) {
+  .mobile-control-bar {
+    display: flex;
+  }
+}
+
+@media (pointer: coarse) {
+  .mobile-control-bar {
+    display: flex;
+  }
+}
+
+.key-btn {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  min-width: 36px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary, #2a2a2a);
+  color: var(--text-primary, #d4d4d4);
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.1s;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.key-btn:active {
+  background: var(--bg-active, #444);
+  transform: scale(0.95);
+}
+
+.key-btn.modifier {
+  font-weight: 600;
+  color: var(--text-secondary, #888);
+}
+
+.key-btn.modifier.active {
+  background: var(--accent, #22c55e);
+  color: #000;
+  border-color: var(--accent, #22c55e);
+}
+
+.arrow-group {
+  display: flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.key-btn.arrow {
+  min-width: 30px;
+  padding: 6px 6px;
+  font-size: 10px;
+}

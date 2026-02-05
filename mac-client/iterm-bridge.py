@@ -21,6 +21,7 @@ import signal
 import base64
 import atexit
 import logging
+import subprocess
 
 logging.basicConfig(
     level=logging.INFO,
@@ -213,6 +214,10 @@ class ITerm2Bridge:
             len(self.app.terminal_windows),
         )
 
+        # Send initial screen contents for the active session so browser shows current state
+        if active_session_id:
+            await self._send_session_screen(active_session_id)
+
     # ──────────────────────────────────────────────────────────────
     # Coprocess management
     # ──────────────────────────────────────────────────────────────
@@ -246,7 +251,24 @@ class ITerm2Bridge:
             success = await session.async_run_coprocess(cmd)
             if not success:
                 log.warning(
-                    "Coprocess already running or failed for session %s",
+                    "Coprocess already running for session %s. Attempting to kill old instance...", 
+                    session_id
+                )
+                
+                # Attempt to kill old coprocess bridge script for this session
+                # Pattern matches command line arguments: coprocess-bridge.sh <session_id>
+                try:
+                    subprocess.run(["pkill", "-f", f"coprocess-bridge.sh {session_id}"], check=False)
+                    await asyncio.sleep(0.5) # Give it time to die and iTerm2 to handle exit
+                    
+                    # Retry starting the coprocess
+                    success = await session.async_run_coprocess(cmd)
+                except Exception as e:
+                    log.error("Failed to kill/retry coprocess: %s", e)
+
+            if not success:
+                log.warning(
+                    "Coprocess start finally failed for session %s",
                     session_id,
                 )
                 # Clean up the server we just created
@@ -353,14 +375,188 @@ class ITerm2Bridge:
                     if update.selected_tab_changed:
                         tab_id = update.selected_tab_changed.tab_id
                         log.info("Tab focus changed: %s", tab_id)
+                        
+                        # Find the active session within the switched tab
+                        active_session_id = None
+                        self.app = await iterm2.async_get_app(self.connection)
+                        if (
+                            self.app.current_terminal_window
+                            and self.app.current_terminal_window.current_tab
+                            and self.app.current_terminal_window.current_tab.current_session
+                        ):
+                            active_session_id = (
+                                self.app.current_terminal_window.current_tab.current_session.session_id
+                            )
+                            log.info("Active session in tab: %s", active_session_id)
+                        
                         await self._send_to_client({
                             "type": "tab_switched",
                             "tab_id": tab_id,
+                            "session_id": active_session_id,
                         })
+
+                        # Automatically send current screen contents for the new session
+                        if active_session_id:
+                            await self._send_session_screen(active_session_id)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             log.error("Focus monitor error: %s", exc, exc_info=True)
+
+    async def _send_session_screen(self, session_id):
+        """Fetch and send the current screen contents for a session with colors if possible."""
+        try:
+            session = self.session_map.get(session_id)
+            if not session:
+                # Try to find the session directly via iTerm2 API
+                log.warning("Session %s not in session_map, trying iTerm2 API lookup", session_id)
+                self.app = await iterm2.async_get_app(self.connection)
+                session = self.app.get_session_by_id(session_id)
+                if session:
+                    # Add to map for future use
+                    self.session_map[session_id] = session
+                else:
+                    log.error("Session %s not found anywhere, available: %s",
+                              session_id, list(self.session_map.keys()))
+                    return
+
+            # Try to get styled content with a short timeout
+            contents = None
+            try:
+                async with session.get_screen_streamer(want_contents=True) as streamer:
+                    # Use a short timeout - if screen was recently updated, we get styled content
+                    contents = await asyncio.wait_for(streamer.async_get(style=True), timeout=0.1)
+                    if contents:
+                        log.info("Got styled screen contents")
+            except asyncio.TimeoutError:
+                log.debug("ScreenStreamer timed out, falling back to plain text")
+            except Exception as e:
+                log.debug("ScreenStreamer failed: %s, falling back to plain text", e)
+
+            # Fallback to plain text if styled content not available
+            if not contents:
+                contents = await session.async_get_screen_contents()
+                if not contents:
+                    return
+
+            log.info("Screen contents lines: %d", contents.number_of_lines)
+
+            # Build content - try styled rendering first
+            output_lines = []
+            has_style = False
+            for i in range(contents.number_of_lines):
+                line = contents.line(i)
+                # Check if this line has style information
+                if hasattr(line, 'style_at') and line.style_at(0) is not None:
+                    has_style = True
+                    line_output = self._render_line_with_style(line)
+                else:
+                    line_output = line.string.rstrip()
+                output_lines.append(line_output)
+
+            # Build final content
+            clear_screen = "\x1b[2J"
+            cursor_home = "\x1b[H"
+            content = "\r\n".join(output_lines)
+            reset = "\x1b[0m" if has_style else ""
+            cursor_pos = f"\x1b[{contents.number_of_lines};1H"
+
+            full_text = clear_screen + cursor_home + content + reset + cursor_pos
+
+            # Send as initial_terminal_data
+            await self._send_to_client({
+                "type": "initial_terminal_data",
+                "session_id": session_id,
+                "data": base64.b64encode(full_text.encode("utf-8")).decode("ascii"),
+            })
+            log.info("Sent initial screen for session %s (%d lines, styled=%s)",
+                     session_id, len(output_lines), has_style)
+
+        except Exception as exc:
+            log.error("Failed to send screen content for %s: %s", session_id, exc, exc_info=True)
+
+    def _render_line_with_style(self, line):
+        """Render a line with ANSI color codes based on cell styles."""
+        result = []
+        line_str = line.string
+        prev_fg = None
+        prev_bg = None
+        prev_attrs = None
+
+        for x, char in enumerate(line_str):
+            style = line.style_at(x)
+            if style:
+                # Get current style attributes
+                curr_attrs = (style.bold, style.italic, style.underline,
+                              style.faint, style.inverse, style.strikethrough)
+                curr_fg = self._get_color_tuple(style.fg_color)
+                curr_bg = self._get_color_tuple(style.bg_color)
+
+                # Emit ANSI codes if style changed
+                if curr_attrs != prev_attrs or curr_fg != prev_fg or curr_bg != prev_bg:
+                    codes = self._build_ansi_codes(style, curr_fg, curr_bg)
+                    if codes:
+                        result.append(codes)
+                    prev_attrs = curr_attrs
+                    prev_fg = curr_fg
+                    prev_bg = curr_bg
+
+            result.append(char)
+
+        return "".join(result).rstrip()
+
+    def _get_color_tuple(self, color):
+        """Get a tuple representation of a color for comparison."""
+        if color is None:
+            return None
+        try:
+            if color.is_rgb:
+                rgb = color.rgb
+                return ("rgb", int(rgb.red), int(rgb.green), int(rgb.blue))
+            if color.is_standard:
+                return ("std", color.standard)
+        except Exception:
+            pass
+        return None
+
+    def _build_ansi_codes(self, style, fg_tuple, bg_tuple):
+        """Build ANSI escape codes for the given style."""
+        codes = []
+
+        # Reset first to clear previous state
+        codes.append("0")
+
+        # Text attributes
+        if style.bold:
+            codes.append("1")
+        if style.faint:
+            codes.append("2")
+        if style.italic:
+            codes.append("3")
+        if style.underline:
+            codes.append("4")
+        if style.inverse:
+            codes.append("7")
+        if style.strikethrough:
+            codes.append("9")
+
+        # Foreground color
+        if fg_tuple:
+            if fg_tuple[0] == "rgb":
+                codes.append(f"38;2;{fg_tuple[1]};{fg_tuple[2]};{fg_tuple[3]}")
+            elif fg_tuple[0] == "std":
+                codes.append(f"38;5;{fg_tuple[1]}")
+
+        # Background color
+        if bg_tuple:
+            if bg_tuple[0] == "rgb":
+                codes.append(f"48;2;{bg_tuple[1]};{bg_tuple[2]};{bg_tuple[3]}")
+            elif bg_tuple[0] == "std":
+                codes.append(f"48;5;{bg_tuple[1]}")
+
+        if codes:
+            return f"\x1b[{';'.join(codes)}m"
+        return ""
 
     async def _monitor_layout(self):
         """Watch for tab creation/deletion using iTerm2 LayoutChangeMonitor."""
@@ -436,8 +632,47 @@ class ITerm2Bridge:
             await self._create_tab()
         elif cmd_type == "tab_close":
             await self._close_tab(msg["tab_id"])
+        elif cmd_type == "request_screen_refresh":
+            await self._handle_screen_refresh_request(msg)
+        elif cmd_type == "resend_initial_state":
+            # Browser (re)connected - resend sessions, config, and screen content
+            log.info("Browser reconnected, resending initial state")
+            await self._resend_initial_state()
         else:
             log.warning("Unknown command type: %s", cmd_type)
+
+    async def _handle_screen_refresh_request(self, msg):
+        """Handle request from browser to refresh screen content for a session."""
+        session_id = msg.get("session_id")
+        if session_id:
+            log.info("Screen refresh requested for session: %s", session_id)
+            await self._send_session_screen(session_id)
+        else:
+            # If no session specified, refresh the active session
+            if (
+                self.app
+                and self.app.current_terminal_window
+                and self.app.current_terminal_window.current_tab
+                and self.app.current_terminal_window.current_tab.current_session
+            ):
+                active_session_id = (
+                    self.app.current_terminal_window.current_tab.current_session.session_id
+                )
+                log.info("Screen refresh requested for active session: %s", active_session_id)
+                await self._send_session_screen(active_session_id)
+
+    async def _resend_initial_state(self):
+        """Resend all initial state when browser reconnects."""
+        try:
+            # Re-enumerate sessions (also sends initial screen content for active session)
+            await self._enumerate_and_send_sessions()
+            # Resend config
+            await self._send_config()
+            # Send ready signal
+            await self._send_to_client({"type": "ready"})
+            log.info("Resent initial state to reconnected browser")
+        except Exception as exc:
+            log.error("Failed to resend initial state: %s", exc, exc_info=True)
 
     async def _handle_terminal_input(self, msg):
         """Forward keyboard input to a coprocess (becomes iTerm2 keyboard input)."""
@@ -494,15 +729,36 @@ class ITerm2Bridge:
         )
 
     async def _switch_tab(self, tab_id):
-        """Switch to a tab by ID in iTerm2."""
+        """Switch to a tab by ID in iTerm2 and send screen content to browser."""
         self.app = await iterm2.async_get_app(self.connection)
+
+        # Try to find by tab_id first
         for window in self.app.terminal_windows:
             for tab in window.tabs:
                 if tab.tab_id == tab_id:
                     await tab.async_select()
                     log.info("Switched to tab %s", tab_id)
+                    # Send screen content for the active session in this tab
+                    if tab.current_session:
+                        await self._send_session_screen(tab.current_session.session_id)
                     return
-        log.warning("Tab %s not found", tab_id)
+
+        # Fallback: Check if tab_id is actually a session_id
+        # The browser sending session IDs as tab IDs is a known behavior
+        session = self.app.get_session_by_id(tab_id)
+        if session:
+            await session.async_activate()
+            log.info("Activated session %s (via switch_tab)", tab_id)
+            # Send screen content for this session
+            await self._send_session_screen(tab_id)
+            return
+
+        # Log available tabs for debugging
+        all_tabs = []
+        for w in self.app.terminal_windows:
+            for t in w.tabs:
+                all_tabs.append(t.tab_id)
+        log.warning("Tab/Session %s not found. Available Tabs: %s", tab_id, all_tabs)
 
     async def _create_tab(self):
         """Create a new tab in the current iTerm2 window."""

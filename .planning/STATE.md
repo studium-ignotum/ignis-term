@@ -86,6 +86,11 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | Binary frame format: 1-byte length prefix | Variable-length session IDs with simple framing | 05-06 |
 | Arc<Mutex<HashMap>> for IPC sessions | Shared mutable access from handler and command processor | 05-06 |
 | Clone command senders for forwarding | Each forwarder needs own copy for opposite-module routing | 05-06 |
+| winit EventLoop for macOS tray icon | macOS requires proper run loop for tray to appear | 05-05 |
+| ApplicationHandler trait pattern | EventLoop::with_user_event() + run_app() for macOS apps | 05-05 |
+| TrayIconEvent::set_event_handler bridging | Forward tray events to winit via EventLoopProxy | 05-05 |
+| LSUIElement=true for menu bar app | Info.plist key hides app from Dock | 05-05 |
+| SMAppService for login items | macOS 13+ API for register/unregister at login | 05-05 |
 
 ### v2.0 Stack (from research)
 
@@ -114,6 +119,6 @@ None -- Mac client complete, ready for shell integration.
 
 ## Session Continuity
 
-Last session: 2026-02-05T21:48:56Z
-Stopped at: Completed 05-06-PLAN.md (Terminal Data Forwarding)
+Last session: 2026-02-06T05:00:00Z
+Stopped at: Completed 05-05-PLAN.md (App Bundle & Login Item) with winit fix
 Resume file: .planning/phases/06-shell-integration/

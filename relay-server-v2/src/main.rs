@@ -1,4 +1,5 @@
 mod assets;
+mod handlers;
 mod protocol;
 mod session;
 mod state;
@@ -10,10 +11,6 @@ use tracing::info;
 
 use crate::assets::Assets;
 use crate::state::AppState;
-
-async fn ws_handler_placeholder() -> &'static str {
-    "WebSocket endpoint - not yet implemented"
-}
 
 async fn debug_sessions(State(state): State<AppState>) -> String {
     format!("Active sessions: {}", state.session_count())
@@ -43,7 +40,7 @@ async fn main() {
 
     // Build router
     let app = Router::new()
-        .route("/ws", get(ws_handler_placeholder))
+        .route("/ws", get(handlers::ws_handler))
         .route("/debug/sessions", get(debug_sessions))
         .fallback_service(serve_assets)
         .with_state(state);

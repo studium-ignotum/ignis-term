@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 4 - Relay Server (4/4 plans complete)
-Plan: 04 complete - PHASE COMPLETE
-Status: Phase 4 complete, ready for Phase 5
-Last activity: 2026-02-05 -- Completed 04-04-PLAN.md (WebSocket handler)
+Phase: 5 - Mac Client (1/6 plans complete)
+Plan: 01 complete
+Status: In progress
+Last activity: 2026-02-06 -- Completed 05-01-PLAN.md (Foundation)
 
-Progress: [##########] 100% (phase 4)
+Progress: [##--------] 17% (phase 5)
 
 ## v2.0 Overview
 
@@ -23,7 +23,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
 | 4 | Relay Server | 5 (RELAY) | COMPLETE (4/4 plans) |
-| 5 | Mac Client | 13 (CLIENT) | Ready to start |
+| 5 | Mac Client | 13 (CLIENT) | In progress (1/6 plans) |
 | 6 | Shell Integration | 9 (SHELL) | Blocked by Phase 5 |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | Blocked by Phase 6 |
 
@@ -69,6 +69,10 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | Browser tracking in Session | DashMap<browser_id, Sender> for multiple browsers per session | 04-04 |
 | Channel-based message routing | mpsc::channel per client for async message forwarding | 04-04 |
 | First message determines client type | Register = mac-client, Auth = browser | 04-04 |
+| tray-icon + muda for menu bar | Lighter weight than full Tauri for menu-only app | 05-01 |
+| Template icon with icon_as_template(true) | macOS auto-inverts for dark mode | 05-01 |
+| Polling event loop with 10ms sleep | Non-blocking try_recv() avoids busy-waiting | 05-01 |
+| UiCommand/BackgroundEvent enums | Channel types for future thread communication | 05-01 |
 
 ### v2.0 Stack (from research)
 
@@ -97,6 +101,6 @@ None -- relay server foundation established.
 
 ## Session Continuity
 
-Last session: 2026-02-05T20:35:37Z
-Stopped at: Completed 04-04-PLAN.md (Phase 4 complete)
-Resume file: Phase 5 planning needed
+Last session: 2026-02-06T21:25:00Z
+Stopped at: Completed 05-01-PLAN.md (Foundation)
+Resume file: .planning/phases/05-mac-client/05-02-PLAN.md

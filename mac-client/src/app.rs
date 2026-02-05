@@ -34,6 +34,12 @@ pub enum UiEvent {
     ShellCountChanged(usize),
     /// Error from IPC server
     IpcError(String),
+
+    // Terminal data forwarding
+    /// Terminal data from IPC (shell -> relay)
+    TerminalDataFromShell { session_id: String, data: Vec<u8> },
+    /// Terminal data from relay (browser -> shell)
+    TerminalDataFromRelay { session_id: String, data: Vec<u8> },
 }
 
 /// Commands sent from the main UI thread to background tasks.
@@ -41,7 +47,10 @@ pub enum UiEvent {
 pub enum BackgroundCommand {
     /// Request to shutdown background tasks
     Shutdown,
-    // Future: SendToRelay(message), etc.
+    /// Send terminal data to relay (shell -> browser)
+    SendTerminalData { session_id: String, data: Vec<u8> },
+    /// Send terminal data to shell (browser -> shell)
+    SendToShell { session_id: String, data: Vec<u8> },
 }
 
 /// Application state holding current values and menu item references.
@@ -137,10 +146,26 @@ mod tests {
         };
         let _shell_count = UiEvent::ShellCountChanged(5);
         let _ipc_error = UiEvent::IpcError("ipc error".into());
+        let _terminal_from_shell = UiEvent::TerminalDataFromShell {
+            session_id: "sess-1".into(),
+            data: vec![0x1b, 0x5b, 0x41],
+        };
+        let _terminal_from_relay = UiEvent::TerminalDataFromRelay {
+            session_id: "sess-1".into(),
+            data: vec![0x68, 0x65, 0x6c, 0x6c, 0x6f],
+        };
     }
 
     #[test]
     fn test_background_command_variants() {
         let _shutdown = BackgroundCommand::Shutdown;
+        let _send_terminal = BackgroundCommand::SendTerminalData {
+            session_id: "sess-1".into(),
+            data: vec![0x01, 0x02, 0x03],
+        };
+        let _send_to_shell = BackgroundCommand::SendToShell {
+            session_id: "sess-1".into(),
+            data: vec![0x04, 0x05, 0x06],
+        };
     }
 }

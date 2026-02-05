@@ -6,7 +6,7 @@
 use image::ImageReader;
 use mac_client::app::{AppState, BackgroundCommand, UiEvent};
 use mac_client::ipc::{IpcEvent, IpcServer};
-use mac_client::relay::{RelayClient, RelayEvent};
+use mac_client::relay::{RelayClient, RelayCommand, RelayEvent};
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use std::io::Cursor;
 use std::sync::mpsc;
@@ -222,6 +222,22 @@ fn main() {
                 UiEvent::IpcError(msg) => {
                     error!("IPC error: {}", msg);
                 }
+                UiEvent::TerminalDataFromShell { session_id, data } => {
+                    // Terminal data forwarding handled in background thread
+                    debug!(
+                        "Terminal data from shell {}: {} bytes",
+                        session_id,
+                        data.len()
+                    );
+                }
+                UiEvent::TerminalDataFromRelay { session_id, data } => {
+                    // Terminal data forwarding handled in background thread
+                    debug!(
+                        "Terminal data from relay {}: {} bytes",
+                        session_id,
+                        data.len()
+                    );
+                }
             }
         }
 
@@ -254,8 +270,14 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
         let (ipc_event_tx, ipc_event_rx) = mpsc::channel::<IpcEvent>();
 
+        // Create command channel for sending data to relay
+        let (relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
+
         // Create relay client
-        let mut relay = RelayClient::new(relay_url, relay_event_tx);
+        let mut relay = RelayClient::new(relay_url, relay_event_tx, relay_cmd_rx);
+
+        // Store command sender for use by IPC data forwarding
+        let _relay_cmd_tx = relay_cmd_tx;
 
         // Create IPC server
         let mut ipc = match IpcServer::new(ipc_event_tx).await {
@@ -296,6 +318,12 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
                     info!("Shutdown command received");
                     break;
                 }
+                Ok(BackgroundCommand::SendTerminalData { .. }) => {
+                    // Handled directly by IPC -> relay data forwarding (Task 3)
+                }
+                Ok(BackgroundCommand::SendToShell { .. }) => {
+                    // Handled directly by relay -> IPC data forwarding (Task 3)
+                }
                 Err(mpsc::TryRecvError::Empty) => {
                     // No command, continue
                 }
@@ -326,11 +354,12 @@ async fn run_relay_only(
     bg_rx: mpsc::Receiver<BackgroundCommand>,
 ) {
     let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
+    let (_relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
 
     // Create a new relay with the fresh channel
     let relay_url = std::env::var("RELAY_URL")
         .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string());
-    let mut relay = RelayClient::new(relay_url, relay_event_tx);
+    let mut relay = RelayClient::new(relay_url, relay_event_tx, relay_cmd_rx);
 
     let relay_handle = tokio::spawn(async move {
         relay.run().await;
@@ -345,6 +374,12 @@ async fn run_relay_only(
     loop {
         match bg_rx.try_recv() {
             Ok(BackgroundCommand::Shutdown) => break,
+            Ok(BackgroundCommand::SendTerminalData { .. }) => {
+                // No IPC server in relay-only mode
+            }
+            Ok(BackgroundCommand::SendToShell { .. }) => {
+                // No IPC server in relay-only mode
+            }
             Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {}
         }
@@ -373,6 +408,9 @@ fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEv
                     RelayEvent::BrowserConnected(id) => UiEvent::BrowserConnected(id),
                     RelayEvent::BrowserDisconnected(id) => UiEvent::BrowserDisconnected(id),
                     RelayEvent::Error(msg) => UiEvent::RelayError(msg),
+                    RelayEvent::TerminalData { session_id, data } => {
+                        UiEvent::TerminalDataFromRelay { session_id, data }
+                    }
                 };
                 if ui_tx.send(ui_event).is_err() {
                     debug!("UI channel closed, stopping relay event forwarding");

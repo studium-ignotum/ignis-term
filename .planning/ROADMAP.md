@@ -19,7 +19,7 @@ This roadmap covers two milestones. Milestone v1.0 (Phases 1-3) delivered the in
 ### Milestone v2.0 (Rust Rewrite)
 
 - [x] **Phase 4: Relay Server** - Rust WebSocket server with embedded web UI
-- [ ] **Phase 5: Mac Client** - Menu bar app coordinating local sessions with relay
+- [x] **Phase 5: Mac Client** - Menu bar app coordinating local sessions with relay
 - [ ] **Phase 6: Shell Integration** - Universal terminal support via PTY interposition
 - [ ] **Phase 7: Web UI & Full Pipeline** - Browser terminal interface with multi-session support
 
@@ -95,6 +95,7 @@ Plans:
 - [x] 04-04-PLAN.md -- WebSocket handler + message routing (Wave 4)
 
 ### Phase 5: Mac Client (v2.0)
+**Status:** Complete
 **Goal**: Menu bar app coordinates local sessions with cloud relay
 **Depends on**: Phase 4
 **Requirements**: CLIENT-01, CLIENT-02, CLIENT-03, CLIENT-04, CLIENT-05, CLIENT-06, CLIENT-07, CLIENT-08, CLIENT-09, CLIENT-10, CLIENT-11, CLIENT-12, CLIENT-13
@@ -107,12 +108,12 @@ Plans:
   5. Terminal data from local sessions is forwarded to relay
 
 Plans:
-- [ ] 05-01-PLAN.md -- Project foundation + tray skeleton (Wave 1)
-- [ ] 05-02-PLAN.md -- WebSocket client module (Wave 2)
-- [ ] 05-03-PLAN.md -- Unix socket + session tracking (Wave 2)
-- [ ] 05-04-PLAN.md -- Full integration with clipboard confirmation (Wave 3)
-- [ ] 05-05-PLAN.md -- App bundle + login items + verification (Wave 4)
-- [ ] 05-06-PLAN.md -- Bidirectional terminal data forwarding (Wave 4)
+- [x] 05-01-PLAN.md -- Project foundation + tray skeleton (Wave 1)
+- [x] 05-02-PLAN.md -- WebSocket client module (Wave 2)
+- [x] 05-03-PLAN.md -- Unix socket + session tracking (Wave 2)
+- [x] 05-04-PLAN.md -- Full integration with clipboard confirmation (Wave 3)
+- [x] 05-05-PLAN.md -- App bundle + login items + verification (Wave 4)
+- [x] 05-06-PLAN.md -- Bidirectional terminal data forwarding (Wave 4)
 
 ### Phase 6: Shell Integration (v2.0)
 **Goal**: Any shell session can connect to mac-client for remote access
@@ -153,10 +154,10 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 2. Terminal & iTerm2 Integration | 5/5 | Complete | 2026-02-05 |
 | 3. Performance & Reliability | - | Deferred | - |
 | 4. Relay Server | 4/4 | Complete | 2026-02-06 |
-| 5. Mac Client | 0/6 | Ready | - |
-| 6. Shell Integration | 0/? | Not started | - |
-| 7. Web UI & Full Pipeline | 0/? | Not started | - |
+| 5. Mac Client | 6/6 | Complete | 2026-02-06 |
+| 6. Shell Integration | 0/? | Ready | - |
+| 7. Web UI & Full Pipeline | 0/? | Blocked by Phase 6 | - |
 
 ---
 *Created: 2026-02-04*
-*Last updated: 2026-02-06 (Phase 5 revised - added terminal data forwarding)*
+*Last updated: 2026-02-06 (Phase 5 complete - Mac Client with winit event loop)*

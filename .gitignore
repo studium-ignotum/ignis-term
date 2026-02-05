@@ -10,3 +10,4 @@ __pycache__
 *.log
 .venv
 target
+Terminal Remote.app/

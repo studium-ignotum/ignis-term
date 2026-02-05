@@ -6,24 +6,56 @@ Your Mac connects to a relay server, and you can connect from your iPad, laptop,
 
 ## Quick Start
 
+### Automated Setup (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/studium-ignotum/iterm2-remote.git
+cd iterm2-remote
+
+# Run setup script
+./scripts/setup.sh
+
+# Start all services
+./scripts/start.sh
+```
+
+The setup script will:
+- Check and install prerequisites
+- Configure iTerm2 Python API
+- Create Python virtual environment
+- Install all dependencies
+- Optionally set up Cloudflare Tunnel for remote access
+
+**For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md).**
+
 ### Prerequisites
 
 - **macOS** with iTerm2 installed
 - **Node.js** 24.x or later
 - **pnpm** package manager
 - **Python** 3.7+ (for iTerm2 bridge)
+- **iTerm2 Python API enabled** (see [iTerm2 Configuration](#iterm2-configuration))
 
-### Installation
+### Manual Installation
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd claude-code-remote
+git clone https://github.com/studium-ignotum/iterm2-remote.git
+cd iterm2-remote
 
 # Install all dependencies
 cd relay-server && pnpm install && cd ..
 cd ui && pnpm install && cd ..
 cd mac-client && pnpm install && cd ..
+
+# Set up Python environment for Mac client
+cd mac-client
+python3 -m venv .venv
+source .venv/bin/activate
+pip install iterm2
+deactivate
+cd ..
 ```
 
 ### Running Locally
@@ -93,6 +125,36 @@ pnpm run dev
 - Bounded scrollback memory
 - Rate limiting
 - Graceful shutdown handling
+
+## iTerm2 Configuration
+
+The Mac client uses iTerm2's Python API. You must enable it:
+
+1. Open **iTerm2**
+2. Go to **iTerm2 → Preferences** (or press `⌘,`)
+3. Navigate to **General → Magic**
+4. Check **"Enable Python API"**
+
+Without this setting, the Mac client cannot communicate with iTerm2.
+
+## Remote Access with Cloudflare Tunnel
+
+To access your terminal from anywhere (not just localhost):
+
+```bash
+# Install cloudflared
+brew install cloudflared
+
+# Start relay server
+cd relay-server && pnpm start &
+
+# Create a quick tunnel (generates random URL)
+cloudflared tunnel --url http://localhost:8080
+```
+
+Use the generated URL (e.g., `https://random-words.trycloudflare.com`) in your browser.
+
+For persistent tunnels with custom domains, see [docs/SETUP.md](docs/SETUP.md#cloudflare-tunnel-setup).
 
 ## Configuration
 
@@ -292,7 +354,16 @@ Browser renders in xterm.js
 
 ## Documentation
 
-Detailed documentation is available in `.planning/`:
+### Setup & Usage
+
+| Document | Description |
+|----------|-------------|
+| [docs/SETUP.md](docs/SETUP.md) | **Complete setup guide** with iTerm2 config and Cloudflare Tunnel |
+| [mac-client/README.md](mac-client/README.md) | Mac client architecture and data flow |
+| [relay-server/README.md](relay-server/README.md) | Relay server protocol and session management |
+| [ui/README.md](ui/README.md) | Web UI components and WebSocket service |
+
+### Project Planning (in `.planning/`)
 
 | Document | Description |
 |----------|-------------|

@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 4 - Relay Server (1/4 plans complete)
-Plan: 01 complete, 02 next
+Phase: 4 - Relay Server (2/4 plans complete)
+Plan: 02 complete, 03 next
 Status: In progress
-Last activity: 2026-02-05 -- Completed 04-01-PLAN.md (project initialization)
+Last activity: 2026-02-05 -- Completed 04-02-PLAN.md (session state management)
 
-Progress: [##--------] 25% (phase 4)
+Progress: [#####-----] 50% (phase 4)
 
 ## v2.0 Overview
 
@@ -22,7 +22,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
-| 4 | Relay Server | 5 (RELAY) | In progress (1/4 plans) |
+| 4 | Relay Server | 5 (RELAY) | In progress (2/4 plans) |
 | 5 | Mac Client | 13 (CLIENT) | Blocked by Phase 4 |
 | 6 | Shell Integration | 9 (SHELL) | Blocked by Phase 5 |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | Blocked by Phase 6 |
@@ -61,6 +61,9 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | axum-embed 0.1 | 0.2 not available, 0.1 works | 04-01 |
 | Tagged enum protocol | `#[serde(tag = "type", rename_all = "snake_case")]` for clean JSON | 04-01 |
 | PORT env with default | `std::env::var("PORT").unwrap_or_else(\|_\| "3000")` | 04-01 |
+| 31-char code alphabet | Excludes 0/O/1/I/L to prevent transcription errors | 04-02 |
+| Arc<Inner> for AppState | Cheap Clone for axum State while sharing data | 04-02 |
+| DashMap for sessions | Lock-free concurrent access without mutex management | 04-02 |
 
 ### v2.0 Stack (from research)
 
@@ -89,6 +92,6 @@ None -- relay server foundation established.
 
 ## Session Continuity
 
-Last session: 2026-02-05T20:21:10Z
-Stopped at: Completed 04-01-PLAN.md
-Resume file: .planning/phases/04-relay-server/04-02-PLAN.md
+Last session: 2026-02-05T20:24:42Z
+Stopped at: Completed 04-02-PLAN.md
+Resume file: .planning/phases/04-relay-server/04-03-PLAN.md

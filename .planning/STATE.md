@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 4 - Relay Server (3/4 plans complete)
-Plan: 03 complete, 04 next
-Status: In progress
-Last activity: 2026-02-05 -- Completed 04-03-PLAN.md (embedded web UI)
+Phase: 4 - Relay Server (4/4 plans complete)
+Plan: 04 complete - PHASE COMPLETE
+Status: Phase 4 complete, ready for Phase 5
+Last activity: 2026-02-05 -- Completed 04-04-PLAN.md (WebSocket handler)
 
-Progress: [#######---] 75% (phase 4)
+Progress: [##########] 100% (phase 4)
 
 ## v2.0 Overview
 
@@ -22,8 +22,8 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
-| 4 | Relay Server | 5 (RELAY) | In progress (3/4 plans) |
-| 5 | Mac Client | 13 (CLIENT) | Blocked by Phase 4 |
+| 4 | Relay Server | 5 (RELAY) | COMPLETE (4/4 plans) |
+| 5 | Mac Client | 13 (CLIENT) | Ready to start |
 | 6 | Shell Integration | 9 (SHELL) | Blocked by Phase 5 |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | Blocked by Phase 6 |
 
@@ -66,6 +66,9 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | DashMap for sessions | Lock-free concurrent access without mutex management | 04-02 |
 | ServeEmbed with explicit index | `Some("index.html")` required for root path serving | 04-03 |
 | FallbackBehavior::Ok for SPA | Returns index.html for unknown paths (client routing) | 04-03 |
+| Browser tracking in Session | DashMap<browser_id, Sender> for multiple browsers per session | 04-04 |
+| Channel-based message routing | mpsc::channel per client for async message forwarding | 04-04 |
+| First message determines client type | Register = mac-client, Auth = browser | 04-04 |
 
 ### v2.0 Stack (from research)
 
@@ -94,6 +97,6 @@ None -- relay server foundation established.
 
 ## Session Continuity
 
-Last session: 2026-02-05T20:30:00Z
-Stopped at: Completed 04-03-PLAN.md
-Resume file: .planning/phases/04-relay-server/04-04-PLAN.md
+Last session: 2026-02-05T20:35:37Z
+Stopped at: Completed 04-04-PLAN.md (Phase 4 complete)
+Resume file: Phase 5 planning needed

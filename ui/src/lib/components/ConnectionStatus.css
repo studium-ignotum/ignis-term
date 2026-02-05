@@ -1,0 +1,33 @@
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  background-color: rgba(31, 41, 55, 0.5);
+  font-size: 0.875rem;
+}
+
+.connection-status .icon {
+  font-size: 0.75rem;
+}
+
+.connection-status .label {
+  font-weight: 500;
+}
+
+.text-gray-500 {
+  color: var(--text-secondary, #6b7280);
+}
+
+.text-yellow-500 {
+  color: #eab308;
+}
+
+.text-green-500 {
+  color: #22c55e;
+}
+
+.text-orange-500 {
+  color: #f97316;
+}

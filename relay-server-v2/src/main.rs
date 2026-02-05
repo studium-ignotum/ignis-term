@@ -1,3 +1,5 @@
+mod protocol;
+
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use tracing::info;

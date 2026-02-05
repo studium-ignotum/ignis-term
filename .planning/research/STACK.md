@@ -1,332 +1,384 @@
-# Technology Stack: Remote Terminal Control Web App
+# Stack Research: Rust Terminal Remote
 
-**Project:** Web-based remote control for iTerm2
-**Researched:** 2026-02-04
-**Research Method:** Training data (May 2025 cutoff) - web verification tools unavailable
-**Overall Confidence:** MEDIUM (versions should be verified with `npm view [package] version`)
+**Project:** Terminal Remote v2.0 - Rust Rewrite
+**Researched:** 2026-02-06
+**Research Method:** Web search + official documentation verification
+**Overall Confidence:** HIGH (versions verified via crates.io/lib.rs)
 
 ---
 
 ## Recommended Stack
 
-### Terminal Emulation (CRITICAL)
+### Mac Menu Bar App
 
-| Technology | Version | Purpose | Confidence |
-|------------|---------|---------|------------|
-| xterm.js | ^5.x | Terminal emulation in browser | HIGH |
-| @xterm/addon-fit | ^0.10.x | Auto-resize terminal to container | HIGH |
-| @xterm/addon-webgl | ^0.18.x | GPU-accelerated rendering | HIGH |
-| @xterm/addon-web-links | ^0.11.x | Clickable URLs in terminal | MEDIUM |
-| @xterm/addon-canvas | ^0.7.x | Canvas fallback for non-WebGL | MEDIUM |
+| Crate | Version | Purpose | Confidence |
+|-------|---------|---------|------------|
+| tray-icon | ^0.21 | System tray icon with menu | HIGH |
+| muda | ^0.17 | Cross-platform menu utilities | HIGH |
+| image | ^0.25 | Icon loading/conversion | HIGH |
 
-**Why xterm.js:**
-- De facto standard for web terminal emulation (used by VS Code, Hyper, Theia)
-- Full VT100/xterm compatibility including 256-color, true color, mouse events
-- Active development, excellent performance with WebGL addon
-- Mature addon ecosystem for common needs
+**Why tray-icon + muda:**
+- Maintained by tauri-apps team, battle-tested in Tauri apps
+- Works standalone without full Tauri framework overhead
+- Native macOS integration (no webview required)
+- Active development: tray-icon 0.21.3 released Jan 2026, muda 0.17.1 released Jul 2025
+- Provides TrayIconBuilder API with menu attachment and event handling
+- ~970K monthly downloads for muda indicates strong adoption
 
-**Why NOT alternatives:**
-- `terminal.js` - abandoned, no longer maintained
-- `hterm` (Chrome OS) - Google-internal focus, less community adoption
-- `terminaljs` - limited features, no active development
+**macOS-specific requirements:**
+- Event loop and tray icon must be created on main thread
+- Use `TrayIconBuilder::new().with_menu(menu).with_tooltip(text).build()`
+- Events via channel receivers compatible with winit/tao event loops
 
-### Frontend Framework
+**Example pattern:**
+```rust
+use tray_icon::{TrayIconBuilder, menu::Menu};
+use muda::{Menu, MenuItem, PredefinedMenuItem};
 
-| Technology | Version | Purpose | Confidence |
-|------------|---------|---------|------------|
-| SvelteKit | ^2.x | Full-stack framework | HIGH |
-| Svelte | ^5.x (runes) | Reactive UI | HIGH |
-| TypeScript | ^5.x | Type safety | HIGH |
+let menu = Menu::new();
+menu.append(&MenuItem::new("Status: ABC123", true, None))?;
+menu.append(&PredefinedMenuItem::separator())?;
+menu.append(&MenuItem::new("Quit", true, None))?;
 
-**Why SvelteKit:**
-- Excellent reactivity model for real-time terminal state
-- Svelte 5 runes (`$state`, `$derived`) perfect for terminal buffer management
-- Minimal bundle size critical for responsive terminal feel
-- Server-side flexibility for relay coordination
-- Built-in adapter system for deployment (node, static, cloudflare, etc.)
-
-**Why NOT alternatives:**
-- `Next.js` - React's reconciliation overhead unnecessary for terminal rendering
-- `Nuxt` - Vue's virtual DOM adds latency; xterm.js manages its own DOM
-- `Remix` - Great for forms/data, but WebSocket story less mature
-
-### WebSocket Layer
-
-| Technology | Version | Purpose | Confidence |
-|------------|---------|---------|------------|
-| ws | ^8.x | Node.js WebSocket server | HIGH |
-
-**Why `ws`:**
-- Lightweight, zero-dependency WebSocket implementation
-- Battle-tested (millions of downloads/week)
-- Direct WebSocket protocol - no abstraction overhead
-- Binary message support essential for terminal data
-- Excellent backpressure handling for high-throughput scenarios
-
-**Why NOT `socket.io`:**
-- Socket.io adds unnecessary abstraction layer (polling fallback not needed in 2025)
-- Higher latency due to protocol overhead
-- Larger bundle size on client
-- For terminal I/O, raw WebSocket is faster and simpler
-
-**Why NOT `uWebSockets.js`:**
-- Would be faster, but adds C++ dependency complexity
-- `ws` is fast enough for terminal relay (not millions of concurrent connections)
-- Better ecosystem integration with Node.js
-
-### Server Runtime
-
-| Technology | Version | Purpose | Confidence |
-|------------|---------|---------|------------|
-| Node.js | ^22.x LTS | Server runtime | HIGH |
-| node-pty | ^1.x | PTY for local terminal | HIGH (Mac side) |
-
-**Why Node.js 22:**
-- LTS version with long-term support
-- Native WebSocket in `http` module improvements
-- Better ES module support
-- Performance improvements for streaming
-
-**Why `node-pty`:**
-- Required on Mac client side to interface with iTerm2 sessions
-- Provides proper PTY (pseudo-terminal) handling
-- Handles terminal sizing, signals correctly
-
-### Authentication
-
-| Technology | Purpose | Confidence |
-|------------|---------|------------|
-| nanoid | Session code generation | HIGH |
-| Secure random codes | 6-8 character session codes | HIGH |
-
-**Why simple session codes over OAuth/JWT:**
-- Use case is ephemeral pairing (like AirDrop)
-- No persistent accounts needed
-- Session codes expire after connection established
-- Simpler UX: "Enter code: ABC123" vs OAuth flow
-
-**Session code pattern:**
-```typescript
-import { nanoid, customAlphabet } from 'nanoid';
-
-// Alphanumeric, no ambiguous chars (0/O, 1/I/l)
-const generateSessionCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 6);
+let tray = TrayIconBuilder::new()
+    .with_menu(Box::new(menu))
+    .with_tooltip("Terminal Remote")
+    .with_icon(icon)
+    .build()?;
 ```
 
-### Relay Server Infrastructure
+**Why NOT cacao:**
+- Version 0.4.0-beta2 (Aug 2023) - stale, beta quality
+- More powerful but higher complexity for simple menu bar app
+- tray-icon/muda provide exactly what we need
 
-| Technology | Purpose | Confidence |
-|------------|---------|------------|
-| Fly.io or Railway | Edge deployment | MEDIUM |
-| Redis (optional) | Session state if multi-instance | MEDIUM |
+**Why NOT full Tauri:**
+- Overkill for menu bar app with no window UI
+- Adds webview runtime (~2-3MB) we don't need
+- tray-icon/muda are extracted from Tauri, give us just the tray functionality
 
-**Architecture pattern:**
+### WebSocket Server
+
+| Crate | Version | Purpose | Confidence |
+|-------|---------|---------|------------|
+| axum | ^0.8 | HTTP/WebSocket framework | HIGH |
+| tokio | ^1.43 | Async runtime | HIGH |
+| tokio-tungstenite | ^0.26 | WebSocket protocol (via axum) | HIGH |
+| tower-http | ^0.6 | HTTP middleware (CORS, compression) | HIGH |
+
+**Why axum:**
+- From Tokio team, first-class async/tower integration
+- Built-in WebSocket support via `axum::extract::WebSocket`
+- Better developer experience than actix-web (2025 consensus)
+- Version 0.8.0 released Jan 2025 with improved ergonomics
+- New path syntax `/{param}` aligns with OpenAPI
+- Nearly identical performance to actix-web with lower memory usage
+
+**axum 0.8 key changes:**
+- Path syntax: `/{single}` and `/{*many}` (was `/:single`, `/*many`)
+- Improved `Option<T>` extractor with `OptionalFromRequestParts`
+- Removed `#[async_trait]` requirement (Rust 1.75+ native async traits)
+
+**WebSocket pattern with axum:**
+```rust
+use axum::{
+    extract::ws::{WebSocket, WebSocketUpgrade},
+    routing::get,
+    Router,
+};
+
+async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(handle_socket)
+}
+
+async fn handle_socket(mut socket: WebSocket) {
+    while let Some(msg) = socket.recv().await {
+        // Binary messages for terminal I/O
+        // Text messages for control protocol
+    }
+}
+
+let app = Router::new().route("/ws", get(ws_handler));
 ```
-[Mac/iTerm2] <--WebSocket--> [Cloud Relay] <--WebSocket--> [Browser]
-     |                            |                            |
-  node-pty                   ws server                     xterm.js
+
+**Why NOT actix-web:**
+- Steeper learning curve (actor model)
+- Less idiomatic Rust patterns
+- Performance difference negligible for this use case
+- axum ecosystem momentum is stronger in 2025-2026
+
+**Why NOT raw tokio-tungstenite:**
+- Need HTTP server anyway for static assets
+- axum provides WebSocket + HTTP in unified API
+- Would duplicate routing/middleware logic
+
+### Static Asset Embedding
+
+| Crate | Version | Purpose | Confidence |
+|-------|---------|---------|------------|
+| rust-embed | ^8.11 | Embed files at compile time | HIGH |
+| axum-embed | ^0.2 | Serve rust-embed with axum | HIGH |
+
+**Why rust-embed:**
+- Version 8.11.0 released Jan 2026, actively maintained
+- 51 stable releases across 7 major versions
+- Features: compression, debug-embed, include-exclude glob patterns
+- In debug mode, reads from filesystem (hot reload)
+- In release mode, embeds in binary
+- Direct axum integration via axum-embed crate
+
+**Embedding pattern:**
+```rust
+use rust_embed::Embed;
+use axum_embed::ServeEmbed;
+
+#[derive(Embed, Clone)]
+#[folder = "web-ui/dist"]
+struct Assets;
+
+let app = Router::new()
+    .route("/ws", get(ws_handler))
+    .nest_service("/", ServeEmbed::<Assets>::new());
 ```
 
-**Why cloud relay:**
-- NAT traversal without port forwarding
-- Works from any network
-- Session codes for discovery
-- No direct IP exposure
+**Key features to enable:**
+```toml
+[dependencies]
+rust-embed = { version = "8.11", features = ["compression"] }
+axum-embed = "0.2"
+```
 
----
+**Why NOT include_dir:**
+- More manual integration required
+- rust-embed's axum integration is turnkey
+- Compression support built-in
 
-## Supporting Libraries
+**Why NOT tower-http ServeDir:**
+- Serves from filesystem, not embedded
+- Good for dev, but we want single binary for deployment
+- rust-embed gives us both (debug vs release behavior)
 
-| Library | Version | Purpose | When to Use | Confidence |
-|---------|---------|---------|-------------|------------|
-| zod | ^3.x | Schema validation | Session messages | HIGH |
-| nanoid | ^5.x | ID generation | Session codes | HIGH |
-| mitt | ^3.x | Event emitter | Client-side events | MEDIUM |
-| reconnecting-websocket | ^4.x | Auto-reconnect | Browser WebSocket | HIGH |
+### Shell Integration IPC
 
----
+| Approach | Technology | Confidence |
+|----------|------------|------------|
+| Primary | Unix domain socket (std + tokio) | HIGH |
+| Fallback | interprocess crate | MEDIUM |
 
-## Development Tools
+**Why Unix domain sockets:**
+- Native to macOS, no external dependencies
+- Bidirectional communication
+- Higher throughput than named pipes
+- Standard library support: `std::os::unix::net::UnixListener`
+- Tokio support: `tokio::net::UnixListener`
+- Socket path: `~/.terminal-remote/socket` or `/tmp/terminal-remote-{uid}.sock`
 
-| Tool | Purpose | Confidence |
-|------|---------|------------|
-| Vite | Build tool (via SvelteKit) | HIGH |
-| Vitest | Unit testing | HIGH |
-| Playwright | E2E testing | HIGH |
-| ESLint + Prettier | Code quality | HIGH |
+**Shell integration approach:**
+```bash
+# In .zshrc
+if [[ -S "$HOME/.terminal-remote/socket" ]]; then
+  # Connect this shell session to mac-client
+  exec > >(nc -U "$HOME/.terminal-remote/socket") 2>&1
+  # Or use zsh's builtin: zmodload zsh/net/socket
+fi
+```
+
+**Why NOT interprocess crate:**
+- Adds dependency for something stdlib does well on macOS
+- interprocess (v2.3.0) is good for cross-platform, but we're macOS-only
+- Direct tokio::net::UnixListener is simpler
+
+**Why NOT TCP localhost:**
+- Port conflicts possible
+- Unix sockets are faster (no TCP overhead)
+- Better security (filesystem permissions)
+
+**Why NOT named pipes (FIFO):**
+- Unidirectional, would need two pipes
+- Unix sockets are bidirectional by design
+- More complex shell integration
 
 ---
 
 ## Alternatives Considered
 
-| Category | Recommended | Alternative | Why Not Alternative |
-|----------|-------------|-------------|---------------------|
-| Terminal | xterm.js | hterm | Less community, Google-focused |
-| Framework | SvelteKit | Next.js | React overhead for terminal rendering |
-| WebSocket | ws | socket.io | Unnecessary abstraction, higher latency |
-| WebSocket | ws | uWebSockets.js | C++ complexity not worth marginal perf gain |
-| Auth | Session codes | JWT | Overkill for ephemeral pairing |
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Menu bar | tray-icon + muda | cacao | Beta quality, overcomplicated for tray app |
+| Menu bar | tray-icon + muda | Full Tauri | Overkill, adds webview we don't need |
+| Menu bar | tray-icon + muda | tray-item | Less maintained, simpler API but fewer features |
+| WebSocket | axum | actix-web | Steeper learning curve, actor model complexity |
+| WebSocket | axum | warp | Less active development, axum is successor |
+| WebSocket | axum | raw tungstenite | Need HTTP anyway, axum unifies both |
+| Embedding | rust-embed | include_dir | No axum integration, no compression |
+| Embedding | rust-embed | static files | Want single binary, not file dependencies |
+| IPC | Unix socket | TCP localhost | Port conflicts, slower, less secure |
+| IPC | Unix socket | Named pipe | Unidirectional, need two pipes |
+| IPC | Unix socket | interprocess | Over-abstraction for macOS-only target |
 
 ---
 
-## Installation
+## Integration Notes
 
-```bash
-# Frontend (SvelteKit app)
-npm create svelte@latest remote-terminal
-cd remote-terminal
-npm install xterm @xterm/addon-fit @xterm/addon-webgl
-npm install -D typescript @types/node
+### How Pieces Fit Together
 
-# Relay server dependencies
-npm install ws nanoid zod
-npm install -D @types/ws
-
-# Mac client dependencies (separate package)
-npm install ws node-pty nanoid
+```
+                    +------------------+
+                    |   relay-server   |
+                    |   (Rust binary)  |
+                    +------------------+
+                    | axum HTTP server |
+                    | - /ws WebSocket  |
+                    | - /* static UI   |
+                    | rust-embed assets|
+                    +--------+---------+
+                             |
+              WebSocket      |      WebSocket
+           +--------+--------+--------+--------+
+           |                                   |
+           v                                   v
+  +------------------+                +------------------+
+  |   mac-client     |                |     Browser      |
+  |  (Rust binary)   |                |    (xterm.js)    |
+  +------------------+                +------------------+
+  | tray-icon + muda |
+  | Unix socket IPC  |
+  +--------+---------+
+           |
+   Unix domain socket
+           |
+           v
+  +------------------+
+  |  Shell session   |
+  |  (zsh + hook)    |
+  +------------------+
 ```
 
----
+### Dependency Graph
 
-## Version Verification Required
+```toml
+# mac-client/Cargo.toml
+[dependencies]
+tray-icon = "0.21"
+muda = "0.17"
+image = "0.25"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
-**IMPORTANT:** The following versions should be verified before implementation:
-
-```bash
-# Run these to get current versions
-npm view xterm version
-npm view @xterm/addon-fit version
-npm view @xterm/addon-webgl version
-npm view ws version
-npm view @sveltejs/kit version
-npm view nanoid version
-npm view zod version
-npm view node-pty version
+# relay-server/Cargo.toml
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+rust-embed = { version = "8.11", features = ["compression"] }
+axum-embed = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nanoid = "0.4"
 ```
 
-My training data has a May 2025 cutoff. Libraries may have released newer versions with breaking changes.
+### Message Protocol
 
----
+Keep same binary/text split from v1.0:
+- Binary messages: Raw terminal I/O (no parsing overhead)
+- Text messages: JSON control messages (resize, auth, etc.)
 
-## Key Implementation Notes
-
-### xterm.js Setup Pattern
-
-```typescript
-import { Terminal } from 'xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
-import 'xterm/css/xterm.css';
-
-const terminal = new Terminal({
-  cursorBlink: true,
-  fontSize: 14,
-  fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-  theme: {
-    background: '#1e1e1e',
-    foreground: '#d4d4d4',
-  },
-});
-
-const fitAddon = new FitAddon();
-terminal.loadAddon(fitAddon);
-
-// Load WebGL after terminal opens for performance
-terminal.open(containerElement);
-terminal.loadAddon(new WebglAddon());
-fitAddon.fit();
-
-// Handle resize
-window.addEventListener('resize', () => fitAddon.fit());
+```rust
+// Shared types (could be separate crate)
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum ControlMessage {
+    Auth { session_code: String },
+    Resize { cols: u16, rows: u16 },
+    SessionList { sessions: Vec<SessionInfo> },
+}
 ```
 
-### WebSocket Binary Protocol
+### Event Loop Integration (mac-client)
 
-For terminal I/O, use binary messages (not JSON) for performance:
+tray-icon requires running on main thread with event loop:
 
-```typescript
-// Server (relay)
-wss.on('connection', (ws) => {
-  ws.binaryType = 'arraybuffer';
+```rust
+use tray_icon::TrayIconEvent;
+use muda::MenuEvent;
 
-  ws.on('message', (data, isBinary) => {
-    if (isBinary) {
-      // Forward terminal data as-is
-      targetWs.send(data, { binary: true });
-    } else {
-      // Control messages as JSON
-      const msg = JSON.parse(data.toString());
-      handleControlMessage(msg);
+fn main() {
+    // Initialize tray on main thread
+    let tray = build_tray();
+
+    // Spawn tokio runtime for async work
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Main event loop
+    loop {
+        // Handle tray events
+        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            handle_tray_event(event);
+        }
+        if let Ok(event) = MenuEvent::receiver().try_recv() {
+            handle_menu_event(event, &rt);
+        }
+
+        // Small sleep to not busy-wait
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
-  });
-});
-
-// Client (browser)
-socket.binaryType = 'arraybuffer';
-socket.onmessage = (event) => {
-  if (event.data instanceof ArrayBuffer) {
-    terminal.write(new Uint8Array(event.data));
-  } else {
-    handleControlMessage(JSON.parse(event.data));
-  }
-};
+}
 ```
 
-### SvelteKit WebSocket Integration
+---
 
-SvelteKit doesn't have built-in WebSocket support. Use a custom server:
+## Version Verification
 
-```typescript
-// vite.config.ts - for development
-import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
-import { WebSocketServer } from 'ws';
+All versions verified 2026-02-06 via lib.rs/crates.io:
 
-export default defineConfig({
-  plugins: [
-    sveltekit(),
-    {
-      name: 'websocket',
-      configureServer(server) {
-        const wss = new WebSocketServer({ noServer: true });
-        server.httpServer?.on('upgrade', (req, socket, head) => {
-          if (req.url?.startsWith('/ws')) {
-            wss.handleUpgrade(req, socket, head, (ws) => {
-              wss.emit('connection', ws, req);
-            });
-          }
-        });
-      },
-    },
-  ],
-});
-```
-
-For production, use `adapter-node` and handle WebSocket upgrade in custom server entry.
+| Crate | Verified Version | Release Date |
+|-------|-----------------|--------------|
+| tray-icon | 0.21.3 | Jan 3, 2026 |
+| muda | 0.17.1 | Jul 29, 2025 |
+| axum | 0.8.x | Jan 1, 2025 |
+| tokio-tungstenite | 0.26.2+ | 2025 |
+| rust-embed | 8.11.0 | Jan 14, 2026 |
+| interprocess | 2.3.0 | Feb 4, 2026 |
 
 ---
 
 ## Sources
 
-- xterm.js: Training data knowledge of npm package and VS Code usage
-- ws: Training data knowledge of npm package ecosystem
-- SvelteKit: Training data knowledge of Svelte 5 and SvelteKit 2
-- node-pty: Training data knowledge of terminal integration patterns
-
-**Confidence caveat:** All version numbers and some API details come from training data with May 2025 cutoff. Verify current versions before implementation.
+- [tray-icon GitHub](https://github.com/tauri-apps/tray-icon) - Tauri team's tray icon library
+- [muda lib.rs](https://lib.rs/crates/muda) - Menu utilities documentation
+- [axum 0.8.0 announcement](https://tokio.rs/blog/2025-01-01-announcing-axum-0-8-0) - Official Tokio blog
+- [rust-embed lib.rs](https://lib.rs/crates/rust-embed) - Embedding documentation
+- [axum-embed crates.io](https://crates.io/crates/axum-embed) - axum integration for rust-embed
+- [interprocess lib.rs](https://lib.rs/crates/interprocess) - IPC library documentation
+- [Axum vs Actix-Web 2025](https://medium.com/@indrajit7448/axum-vs-actix-web-the-2025-rust-web-framework-war-performance-vs-dx-17d0ccadd75e) - Framework comparison
 
 ---
 
 ## Roadmap Implications
 
-1. **Phase 1 - Core Infrastructure:** Set up SvelteKit + xterm.js + ws relay. This is well-documented territory.
+1. **Phase 1 - Relay Server:** Start with axum + rust-embed. Well-documented, straightforward.
+   - WebSocket handler
+   - Static asset serving
+   - Session code generation
 
-2. **Phase 2 - iTerm2 Integration:** node-pty integration on Mac side. May need research on iTerm2-specific APIs if going beyond basic PTY.
+2. **Phase 2 - Mac Client:** tray-icon + muda for menu bar, then add WebSocket client.
+   - Menu bar with session code display
+   - WebSocket connection to relay
+   - Status updates in menu
 
-3. **Phase 3 - Session Management:** Session codes, reconnection handling. Standard patterns apply.
+3. **Phase 3 - Shell Integration:** Unix socket IPC, then .zshrc hook.
+   - Socket listener in mac-client
+   - Shell hook script
+   - PTY handling for terminal I/O
 
-4. **Phase 4 - Multi-Tab:** Tab switching, session listing. iTerm2 AppleScript/API research may be needed.
+4. **Phase 4 - Integration:** Connect all pieces, end-to-end testing.
+   - Shell -> mac-client -> relay -> browser flow
+   - Reconnection handling
+   - Multiple session support
 
 **Research flags:**
-- iTerm2 scripting API (for tab listing) - needs phase-specific research
-- Deployment options (Fly.io vs Railway vs Cloudflare) - needs cost/latency comparison
+- PTY handling in Rust (may need deeper research for Phase 3)
+- Shell integration edge cases (different zsh configurations)
+- macOS code signing for distribution

@@ -1,592 +1,593 @@
-# Domain Pitfalls: Remote Terminal Control Web App
+# Domain Pitfalls: Rust Terminal Remote Control
 
-**Domain:** Web-based remote terminal (Mac client -> Cloud Relay <- Browser)
-**Stack:** xterm.js, SvelteKit, Node.js, WebSocket
-**Researched:** 2026-02-04
-**Confidence:** MEDIUM (training knowledge, web research unavailable)
-
----
-
-## Critical Pitfalls
-
-Mistakes that cause rewrites, security vulnerabilities, or major reliability issues.
+**Domain:** Rust macOS menu bar app with terminal I/O relay
+**Stack:** Rust, objc2/cacao, tokio, axum, portable-pty, rust-embed
+**Researched:** 2026-02-06
+**Confidence:** MEDIUM-HIGH (verified with multiple sources)
 
 ---
 
-### Pitfall 1: WebSocket Reconnection Without State Synchronization
+## Critical Pitfalls (Will Break the App)
 
-**What goes wrong:** After a connection drop, the client reconnects but the terminal state is desynchronized. User sees corrupted output, missing characters, or stale content. Particularly bad when the drop happens mid-escape-sequence.
+### Pitfall 1: Main Thread Violations (AppKit/Cocoa)
 
-**Why it happens:** Developers implement reconnection logic but don't handle the terminal buffer state. The relay may have buffered data that was sent but never acknowledged. The terminal cursor position, scroll region, and character attributes are lost.
+**What goes wrong:** AppKit requires most UI operations to occur on the main thread. Calling NSStatusBar, NSMenu, or other Cocoa APIs from a Tokio worker thread causes crashes or undefined behavior.
+
+**Why it happens:** Rust async runtimes (Tokio) run tasks on thread pools. Developers naturally call menu bar APIs from async contexts without realizing the threading constraint.
 
 **Consequences:**
-- Garbled terminal output requiring manual refresh
-- Lost command output (user thinks command didn't run)
-- Cursor in wrong position, input appears in wrong place
-- Escape sequences split across reconnection cause rendering artifacts
+- Random crashes with no clear stack trace
+- UI freezes while async operations run
+- Menu bar icon appears briefly then disappears
+- EXC_BAD_ACCESS crashes in Objective-C runtime
 
 **Warning signs:**
-- Users report "weird characters" after wifi blip
-- Terminal "fixes itself" after running `clear`
-- Intermittent reports of "stuck" terminals
+- Crashes that only reproduce intermittently
+- "Main Thread Checker" errors in Xcode debugger
+- Crashes when adding/updating menu items
+- Works in debug, crashes in release (timing differences)
 
 **Prevention:**
-1. Implement sequence-numbered messages (relay tracks what browser acknowledged)
-2. On reconnect, replay unacknowledged data
-3. Consider periodic terminal state snapshots (cursor pos, scroll region, character attrs)
-4. Send a terminal reset sequence on reconnect if state is unrecoverable
-5. Use xterm.js `serialize` addon to capture/restore terminal state
+1. Use objc2's MainThreadMarker for compile-time thread safety guarantees
+2. Run Tokio runtime on background threads, NOT the main thread
+3. Use channels (mpsc) to send commands from async tasks to main thread
+4. Structure app: main thread runs Cocoa event loop, spawns Tokio on background
+5. Never hold async locks while calling into Cocoa
 
-**Detection code pattern:**
-```typescript
-// Track message acknowledgment
-interface Message {
-  seq: number;
-  data: string;
-  acknowledged: boolean;
+**Architecture pattern:**
+- Main thread: Cocoa event loop + receive channel
+- Background thread: Tokio runtime with async tasks
+- Communication: mpsc channels between them
+
+**Phase:** Phase 1 (Menu bar app skeleton) - establish correct threading pattern from the start
+
+**Sources:**
+- [objc2 MainThreadMarker docs](https://docs.rs/objc2-foundation/latest/objc2_foundation/struct.MainThreadMarker.html)
+- [GUIs and the Main Thread - Rust Forum](https://users.rust-lang.org/t/guis-and-the-main-thread/2863)
+- [objc2 GitHub](https://github.com/madsmtm/objc2)
+
+---
+
+### Pitfall 2: PTY Blocking I/O Hangs
+
+**What goes wrong:** PTY read operations are blocking. Reading from a PTY in an async context without spawn_blocking causes the entire Tokio runtime to stall, freezing the application.
+
+**Why it happens:** PTY file descriptors don't support non-blocking I/O in the traditional sense. Developers wrap PTY reads in async functions expecting them to yield, but they block the thread.
+
+**Consequences:**
+- Terminal output stops appearing
+- WebSocket connections time out
+- App becomes completely unresponsive
+- High CPU usage in blocked state (or zero, stuck on read)
+
+**Warning signs:**
+- Output stops after first command
+- Works for small commands, hangs on cat large_file
+- Async tasks scheduled but never execute
+- App works with println! but not PTY output
+
+**Prevention:**
+1. Use tokio::task::spawn_blocking for ALL PTY read/write operations
+2. Create dedicated blocking threads for PTY I/O
+3. Use portable-pty crate's async-aware patterns
+4. Bridge to async with channels:
+   - Blocking thread reads PTY -> sends to channel
+   - Async task receives from channel -> sends to WebSocket
+
+**Phase:** Phase 2 (Shell integration/PTY work) - design the I/O pipeline correctly
+
+**Sources:**
+- [Rust Forum - PTY Output Hangs](https://users.rust-lang.org/t/rust-pty-output-hangs-when-trying-to-read-command-output-in-terminal-emulator/102873)
+- [portable-pty documentation](https://docs.rs/portable-pty)
+- [developerlife.com - PTY in Rust](https://developerlife.com/2025/08/10/pty-rust-osc-seq/)
+
+---
+
+### Pitfall 3: macOS Notarization with Hardened Runtime
+
+**What goes wrong:** macOS requires both code signing AND notarization for distribution outside the App Store. Hardened runtime blocks certain capabilities unless specific entitlements are granted. Without notarization, Gatekeeper blocks the app entirely on macOS Sequoia.
+
+**Why it happens:** Apple security requirements have tightened. A signed-but-not-notarized app gets "damaged and can't be opened" on modern macOS. The Control-click bypass was removed in Sequoia.
+
+**Consequences:**
+- "App is damaged and can't be opened" error
+- Gatekeeper quarantine blocks execution completely
+- App works in development but fails after distribution
+- Users can't install without disabling security (bad UX, support burden)
+
+**Warning signs:**
+- Works on your machine, fails for testers
+- Works when run from Xcode/Terminal, fails from Finder
+- spctl -a -v reports rejection
+- App crashes immediately after signing (entitlements wrong)
+
+**Prevention:**
+1. Set up Developer ID certificate early ($99/year Apple Developer account)
+2. Create proper Entitlements.plist with required capabilities
+3. Sign with hardened runtime: codesign --options runtime --entitlements Entitlements.plist -s "Developer ID" app.app
+4. Submit to notarization: xcrun notarytool submit app.zip --apple-id ... --wait
+5. Staple the ticket: xcrun stapler staple app.app
+6. Test full flow BEFORE release: sign, notarize, download, run
+
+**Phase:** Phase 5 (Distribution/packaging) - but set up signing infrastructure in Phase 1
+
+**Sources:**
+- [Apple Developer - Resolving Notarization Issues](https://developer.apple.com/documentation/security/resolving-common-notarization-issues)
+- [Apple Developer - Developer ID](https://developer.apple.com/developer-id/)
+- [Tauri macOS Bundle docs](https://v2.tauri.app/distribute/macos-application-bundle/)
+
+---
+
+### Pitfall 4: TCC Permission Loss on App Updates
+
+**What goes wrong:** macOS TCC (Transparency, Consent, Control) permissions are tied to code signature hash. When the app is updated with a different signature (or rebuilt differently), previously granted permissions (Accessibility, Automation) are revoked.
+
+**Why it happens:** TCC uses code signature to identify apps. Different builds have different signatures unless using consistent Developer ID. Debug vs Release builds have different signatures.
+
+**Consequences:**
+- Users must re-grant permissions after every update
+- Accessibility features stop working silently post-update
+- Terminal control features fail with no error
+- Permission dialogs appear repeatedly, annoying users
+
+**Warning signs:**
+- Works after fresh install, breaks after update
+- Works in development, breaks in production
+- Users report "it stopped working" after auto-update
+- Console shows TCC denial messages
+
+**Prevention:**
+1. Use consistent Developer ID signing from day one (not just for release)
+2. Never change bundle identifier between versions
+3. Test permission persistence across update scenarios
+4. Use SMAppService for login item registration (survives updates better)
+5. Document which permissions are needed and provide re-grant instructions
+
+**Phase:** Phase 5 (Distribution) - but plan for this from Phase 1
+
+**Sources:**
+- [Tauri Issue #11085 - Permission re-grant after updates](https://github.com/tauri-apps/tauri/issues/11085)
+- [tauri-plugin-macos-permissions](https://crates.io/crates/tauri-plugin-macos-permissions)
+- [jano.dev - Accessibility Permission](https://jano.dev/apple/macos/swift/2025/01/08/Accessibility-Permission.html)
+
+---
+
+## Moderate Pitfalls (Will Cause Issues)
+
+### Pitfall 5: Shell Integration Conflicts with Oh-My-Zsh/Powerlevel10k
+
+**What goes wrong:** Shell integration scripts using precmd/preexec hooks conflict with popular zsh frameworks. Oh-My-Zsh and Powerlevel10k override or interfere with shell hooks, breaking integration.
+
+**Why it happens:** Multiple tools compete for the same hooks. Oh-My-Zsh initializes hooks, then your integration overwrites them (or vice versa). Powerlevel10k's "instant prompt" adds timing complexity.
+
+**Consequences:**
+- Integration works in vanilla zsh but breaks with oh-my-zsh
+- Hooks fire inconsistently or not at all
+- First prompt works, subsequent prompts don't
+- User's existing prompt/theme breaks
+
+**Warning signs:**
+- Works for you (vanilla zsh), fails for testers (oh-my-zsh)
+- Works on first prompt, fails on subsequent
+- precmd_functions array doesn't contain your hook
+- Powerlevel10k shows warnings about slow hooks
+
+**Prevention:**
+1. Use add-zsh-hook function, not direct assignment
+2. Test with oh-my-zsh, Powerlevel10k, and starship configurations
+3. Load integration AFTER oh-my-zsh sources (document load order)
+4. Provide instructions for .zshrc ordering
+5. Use unique function names to avoid collisions
+
+**Recommended shell integration pattern:**
+```zsh
+# Guard against double-loading
+[[ -n "$YOUR_APP_LOADED" ]] && return
+export YOUR_APP_LOADED=1
+
+# Guard against non-interactive
+[[ -o interactive ]] || return
+
+# Use add-zsh-hook, not direct assignment
+autoload -Uz add-zsh-hook
+
+_your_app_precmd() {
+  # Fail silently, don't break user's shell
+  { your_integration_code } 2>/dev/null || true
 }
 
-// On reconnect
-const unacked = messages.filter(m => !m.acknowledged);
-for (const msg of unacked) {
-  terminal.write(msg.data);
-}
+add-zsh-hook precmd _your_app_precmd
 ```
 
-**Phase:** Address in Phase 1 (Connection/Infrastructure) - this is foundational
+**Phase:** Phase 2 (Shell integration) - test extensively with popular configs
+
+**Sources:**
+- [VSCode Issue #146587 - Shell integration with oh-my-zsh](https://github.com/microsoft/vscode/issues/146587)
+- [Powerlevel10k Issue #1827 - VSCode shell integration](https://github.com/romkatv/powerlevel10k/issues/1827)
+- [Oh-My-Zsh Issue #13132 - iTerm2 integration conflict](https://github.com/ohmyzsh/ohmyzsh/issues/13132)
 
 ---
 
-### Pitfall 2: Terminal Resize Race Conditions
+### Pitfall 6: SIGWINCH Terminal Resize Not Propagated
 
-**What goes wrong:** User resizes browser window, terminal dimensions update locally, but the PTY on the Mac doesn't resize in sync. Output wraps incorrectly. Full-screen apps like vim/tmux render garbage.
+**What goes wrong:** When the remote viewer resizes, the PTY window size must be updated via ioctl(TIOCSWINSZ). Failing to handle this causes garbled output, broken TUI apps (vim, htop), and cursor position errors.
 
-**Why it happens:** Resize events fire rapidly during drag. Network latency means PTY resize arrives after data was already rendered for old dimensions. No coordination between terminal render size and PTY knowledge of size.
+**Why it happens:** Resize events are easy to miss. Developers implement resize in the viewer but forget to propagate to the PTY. Signal handlers in Rust are tricky.
 
 **Consequences:**
-- vim/nano/tmux become unusable after resize
-- Command output wraps at wrong column
-- ncurses apps show corrupted UI
-- Users have to disconnect/reconnect to fix
+- vim/nano displays garbled after resize
+- TUI apps (htop, top, tmux) render incorrectly
+- Text wraps at wrong column
+- Cursor position drifts from actual position
 
 **Warning signs:**
-- Resize works on first try but breaks on rapid resizing
-- Works locally but breaks over slow connections
-- vim users report frequent display corruption
+- Works for simple commands, breaks for vim/nano
+- Resize "works" but output looks wrong
+- Works at startup, breaks after first resize
+- Works locally, breaks over network (timing)
 
 **Prevention:**
-1. Debounce resize events (200-300ms typically)
-2. Send resize with sequence number, don't apply locally until confirmed
-3. After resize confirmation, request full redraw from PTY (`SIGWINCH` sends redraw for most apps)
-4. Consider resize locking: show "resizing..." overlay, unlock after confirmation
-5. Store and validate dimensions match on both ends
+1. When viewer sends resize, call ioctl(TIOCSWINSZ) on PTY master fd
+2. Use atomic flag pattern for signal handling
+3. Include window size in WebSocket protocol
+4. Send resize acknowledgment back to viewer
+5. Test with TUI apps: vim, htop, tmux after resize
 
-**Detection:**
-```typescript
-// Debounce + confirmation pattern
-let resizeTimeout: NodeJS.Timeout;
-let pendingResize: { cols: number; rows: number } | null = null;
+**Phase:** Phase 3 (WebSocket relay) - include resize in the protocol from the start
 
-terminal.onResize(({ cols, rows }) => {
-  clearTimeout(resizeTimeout);
-  pendingResize = { cols, rows };
-  resizeTimeout = setTimeout(() => {
-    sendResize(pendingResize);
-    // Don't apply to fitAddon until server confirms
-  }, 250);
-});
-
-socket.on('resize-ack', ({ cols, rows }) => {
-  if (pendingResize?.cols === cols && pendingResize?.rows === rows) {
-    fitAddon.fit(); // Now safe to apply
-    pendingResize = null;
-  }
-});
-```
-
-**Phase:** Address in Phase 2 (Terminal Rendering) - after basic connection works
+**Sources:**
+- [SIGWINCH handling patterns](http://www.rkoucha.fr/tech_corner/sigwinch.html)
+- [rexpect Issue #10 - resize window on SIGWINCH](https://github.com/rust-cli/rexpect/issues/10)
 
 ---
 
-### Pitfall 3: Authentication Token Exposure in WebSocket URL
+### Pitfall 7: WebSocket Reconnection Not Automatic
 
-**What goes wrong:** Auth token passed as query parameter in WebSocket URL (`wss://relay.com?token=xxx`). Token appears in server logs, browser history, referrer headers, and any proxy logs.
+**What goes wrong:** WebSocket connections drop (network changes, sleep/wake, proxy timeouts). Neither tokio-tungstenite nor axum provide automatic reconnection. Lost connections mean lost terminal sessions without explicit handling.
 
-**Why it happens:** WebSocket API doesn't support custom headers in browser. Developers take the "easy" path of query params. Works functionally but creates security vulnerability.
-
-**Consequences:**
-- Tokens in server access logs (often stored long-term)
-- Tokens visible in browser dev tools network tab (shoulder surfing)
-- Tokens in proxy logs if corporate network
-- Replay attacks possible if tokens long-lived
-
-**Warning signs:**
-- Security audit flags it immediately
-- Tokens appearing in error tracking/logging tools
-- Users report sessions being "hijacked" (rare but devastating)
-
-**Prevention:**
-1. Use short-lived connection tickets: HTTP request gets single-use ticket, WebSocket connects with ticket (valid for 30 seconds, single use)
-2. Implement proper WebSocket authentication handshake after connection
-3. Never log query parameters containing tokens
-4. Rotate connection credentials frequently
-5. Consider mTLS for Mac client to relay connection
-
-**Secure pattern:**
-```typescript
-// Step 1: Get short-lived ticket via authenticated HTTP
-const { ticket } = await fetch('/api/ws-ticket', {
-  headers: { Authorization: `Bearer ${authToken}` }
-}).then(r => r.json());
-
-// Step 2: Connect with single-use ticket (30 sec validity)
-const ws = new WebSocket(`wss://relay.com/connect?ticket=${ticket}`);
-
-// Step 3: Ticket validated and invalidated on server, real session established
-ws.onopen = () => {
-  // Connection authenticated, ticket can never be reused
-};
-```
-
-**Phase:** Address in Phase 1 (Auth/Security) - before any other features
-
----
-
-### Pitfall 4: Memory Leaks from Terminal Buffer Growth
-
-**What goes wrong:** Terminal scrollback buffer grows unbounded. Browser tab consumes gigabytes of memory over time. Eventually crashes or becomes unresponsive.
-
-**Why it happens:** xterm.js default scrollback is 1000 lines but can be set higher. More importantly, developers often keep parallel data structures (for search, logging, replay) that also grow unbounded.
+**Why it happens:** WebSocket protocol doesn't define reconnection. Libraries implement the protocol, not application-level resilience.
 
 **Consequences:**
-- Browser tab crashes after hours of use
-- Gradual performance degradation
-- Mobile browsers especially affected
-- Users blame the app for "being slow"
+- Terminal goes blank after network change
+- No error shown to user when connection drops
+- Session state lost after reconnection
+- Mac waking from sleep = broken session
 
 **Warning signs:**
-- Memory usage grows linearly with session duration
-- Performance degrades over long sessions
-- Mobile users report crashes more than desktop
-
-**Prevention:**
-1. Set explicit scrollback limit: `new Terminal({ scrollback: 5000 })`
-2. Audit all parallel data structures for the same limit
-3. Implement circular buffers for any logging/replay features
-4. Add memory monitoring and warning at threshold
-5. Consider "trim" feature for very long sessions
-
-**Configuration:**
-```typescript
-const terminal = new Terminal({
-  scrollback: 5000, // Explicit limit
-  // ... other options
-});
-
-// If you maintain parallel structures:
-class BoundedBuffer<T> {
-  private buffer: T[] = [];
-  private maxSize: number;
-
-  constructor(maxSize: number) {
-    this.maxSize = maxSize;
-  }
-
-  push(item: T) {
-    this.buffer.push(item);
-    if (this.buffer.length > this.maxSize) {
-      this.buffer.shift(); // Remove oldest
-    }
-  }
-}
-```
-
-**Phase:** Address in Phase 2 (Terminal Rendering) - configure early, monitor ongoing
-
----
-
-### Pitfall 5: Relay Connection State Mismatch (Three-Party Problem)
-
-**What goes wrong:** Browser thinks it's connected, relay thinks it's connected, but Mac client has actually disconnected. User types commands that go nowhere. Or: Mac client disconnected from PTY but relay doesn't know.
-
-**Why it happens:** Three-party architecture (Browser <-> Relay <-> Mac) has more failure modes than two-party. Each connection can fail independently. Without end-to-end health checks, intermediate state becomes stale.
-
-**Consequences:**
-- User types into void (feels broken, no feedback)
-- "Connected" indicator lies to user
-- Commands silently lost
-- Delayed error feedback (might take 30+ seconds to realize)
-
-**Warning signs:**
+- Works continuously, fails after network blip
+- Works on stable network, fails on wifi
+- Laptop sleep/wake breaks connection permanently
 - Users report "it just stopped working"
-- Works again after page refresh
-- Logs show connections but no data flow
-- Intermittent reports impossible to reproduce
 
 **Prevention:**
-1. End-to-end heartbeat: Browser sends ping, must reach Mac and return (not just relay)
-2. Relay immediately notifies browser when Mac disconnects
-3. Display connection state for BOTH legs (Browser-Relay and Relay-Mac)
-4. Implement "connection quality" indicator (latency, recent success rate)
-5. Auto-reconnect with exponential backoff when Mac side drops
+1. Implement exponential backoff reconnection on client side
+2. Use heartbeat/ping-pong to detect dead connections early
+3. Consider ezsockets crate which includes reconnection logic
+4. Buffer terminal output during disconnection for replay on reconnect
+5. Show connection status indicator in UI
+6. Store session ID to reconnect to same PTY
 
-**State machine:**
-```typescript
-type ConnectionState =
-  | 'disconnected'           // No connection
-  | 'connecting'             // Establishing
-  | 'relay-connected'        // Browser <-> Relay OK, Mac unknown
-  | 'fully-connected'        // Both legs confirmed
-  | 'mac-disconnected'       // Relay connected but Mac dropped
-  | 'reconnecting';          // Attempting to restore
+**Phase:** Phase 3 (WebSocket relay) - build reconnection from the start
 
-// Display different UI for each state
-// Only allow input when 'fully-connected'
-```
-
-**Phase:** Address in Phase 1 (Connection/Infrastructure) - core architecture decision
+**Sources:**
+- [tokio-tungstenite Issue #101 - Auto reconnect](https://github.com/snapview/tokio-tungstenite/issues/101)
+- [axum Discussion #1216 - WebSocket reconnects](https://github.com/tokio-rs/axum/discussions/1216)
+- [ezsockets crate](https://crates.io/crates/ezsockets)
 
 ---
 
-### Pitfall 6: Input Handling for Special Keys and Modifiers
+### Pitfall 8: Binary Size Explosion with Embedded Assets
 
-**What goes wrong:** Ctrl+C doesn't send interrupt. Ctrl+D doesn't EOF. Arrow keys send garbage in some terminals. Meta/Alt key combinations fail. Copy/paste conflicts with terminal selection.
+**What goes wrong:** Embedding web UI assets (HTML, JS, CSS, images) with include_bytes! or rust-embed can balloon binary size. Debug symbols compound the problem. 50MB+ binaries are common without optimization.
 
-**Why it happens:** Keyboard handling is complex: browser events, xterm.js processing, encoding to PTY, and shell interpretation all must align. Platform differences (Mac Cmd vs Win Ctrl) add complexity.
+**Why it happens:** Rust debug builds include symbols. Web assets add up. Multiple copies of assets in different forms. Compression not applied.
 
 **Consequences:**
-- Can't cancel running processes (Ctrl+C)
-- Can't exit programs properly (Ctrl+D)
-- Command line editing broken (arrows, home/end)
-- Users can't use keyboard shortcuts they rely on
-- Copy/paste doesn't work as expected
+- Binary exceeds 50-100MB
+- Download/install time frustrates users
+- CI/CD slow to upload artifacts
+- GitHub releases hit size limits
 
 **Warning signs:**
-- Users report Ctrl+C "doesn't work"
-- Arrow keys show `^[[A` instead of moving cursor
-- Different behavior across browsers
-- Mac vs Windows users have different experiences
+- Release binary much larger than expected
+- Debug binary 10x larger than release
+- Adding web assets dramatically increases size
+- Users complain about download size
 
 **Prevention:**
-1. Test ALL common key combinations explicitly (create test matrix)
-2. Use xterm.js attachCustomKeyEventHandler for browser shortcuts that conflict
-3. Handle Mac Cmd key appropriately (Cmd+C for copy, Ctrl+C for SIGINT)
-4. Test in multiple browsers (Chrome, Firefox, Safari have differences)
-5. Provide keyboard shortcut documentation/reference
+1. Enable strip in release profile (Cargo.toml):
+   - strip = true
+   - opt-level = "z"
+   - lto = true
+   - codegen-units = 1
+2. Minify web assets before embedding
+3. Use brotli compression for assets, decompress at runtime
+4. Consider lazy loading for non-essential assets
 
-**Test matrix (must all work):**
-```
-| Key Combo      | Expected Action                    |
-|----------------|------------------------------------|
-| Ctrl+C         | SIGINT (0x03)                      |
-| Ctrl+D         | EOF (0x04)                         |
-| Ctrl+Z         | SIGTSTP (0x1A)                     |
-| Ctrl+L         | Clear screen (0x0C)                |
-| Arrow keys     | Cursor movement (escape sequences) |
-| Home/End       | Line navigation                    |
-| Ctrl+Arrow     | Word navigation                    |
-| Ctrl+A/E       | Line start/end (emacs mode)        |
-| Tab            | Completion                         |
-| Ctrl+R         | Reverse search                     |
-| Cmd+C (Mac)    | Copy selection (NOT SIGINT)        |
-| Cmd+V (Mac)    | Paste                              |
-```
+**Phase:** Phase 4 (Embedded web UI) - configure Cargo.toml profiles from start
 
-**Phase:** Address in Phase 2 (Terminal Rendering) - test thoroughly before UX polish
+**Sources:**
+- [min-sized-rust guide](https://github.com/johnthagen/min-sized-rust)
+- [Kobzol's blog - Making Rust binaries smaller](https://kobzol.github.io/rust/cargo/2024/01/23/making-rust-binaries-smaller-by-default.html)
 
 ---
 
-## Moderate Pitfalls
+### Pitfall 9: UTF-8 Encoding Mismatches
 
-Mistakes that cause delays, technical debt, or degraded user experience.
+**What goes wrong:** PTY inherits locale from environment. If LANG/LC_ALL aren't set correctly, UTF-8 characters display as garbage. This especially affects emoji, international characters, and special symbols.
 
----
-
-### Pitfall 7: WebGL Renderer Compatibility Issues
-
-**What goes wrong:** xterm.js WebGL renderer (faster) fails on some devices/browsers. Fallback to canvas renderer not implemented. Terminal shows black screen or crashes.
-
-**Why it happens:** WebGL has varying support across devices, especially: older machines, VMs, remote desktops, some mobile browsers, privacy-focused browser configs that disable WebGL.
+**Why it happens:** macOS may have different default locale. PTY spawned without explicit env vars inherits unpredictable locale.
 
 **Consequences:**
-- Terminal unusable for subset of users
-- Hard to debug (works on dev machines)
-- Black screen with no error message
-- Users think app is broken
+- Emoji appear as question marks or boxes
+- International characters garbled
+- Git output with non-ASCII broken
+- Filenames with special chars unreadable
+
+**Warning signs:**
+- Works in your terminal, broken in app
+- Works for ASCII, fails for international users
+- Emoji show as ??? or boxes
 
 **Prevention:**
-1. Always implement canvas fallback
-2. Detect WebGL failure and switch automatically
-3. Let users manually choose renderer in settings
-4. Log which renderer is active for debugging
-5. Test in VM and with WebGL disabled
+1. Set explicit locale when spawning PTY:
+   - LANG=en_US.UTF-8
+   - LC_ALL=en_US.UTF-8
+   - TERM=xterm-256color
+2. Use binary WebSocket frames, decode as UTF-8 explicitly
+3. Handle invalid UTF-8 gracefully (lossy conversion, not panic)
+4. Test with emoji, CJK characters, RTL text
 
-**Implementation:**
-```typescript
-import { Terminal } from 'xterm';
-import { WebglAddon } from 'xterm-addon-webgl';
-import { CanvasAddon } from 'xterm-addon-canvas';
+**Phase:** Phase 2 (Shell integration) - set locale in PTY spawn
 
-const terminal = new Terminal();
-
-try {
-  const webglAddon = new WebglAddon();
-  webglAddon.onContextLoss(() => {
-    webglAddon.dispose();
-    loadCanvasFallback();
-  });
-  terminal.loadAddon(webglAddon);
-  console.log('Using WebGL renderer');
-} catch (e) {
-  console.log('WebGL unavailable, using canvas');
-  loadCanvasFallback();
-}
-
-function loadCanvasFallback() {
-  terminal.loadAddon(new CanvasAddon());
-}
-```
-
-**Phase:** Address in Phase 2 (Terminal Rendering) - implement fallback from start
+**Sources:**
+- [xterm.js Encoding guide](https://xtermjs.org/docs/guides/encoding/)
+- [Baeldung - Linux Terminal Character Encoding](https://www.baeldung.com/linux/terminal-locales-check-character-encoding)
 
 ---
 
-### Pitfall 8: No Offline/Disconnected State Handling
+### Pitfall 10: Login Item Registration (SMAppService)
 
-**What goes wrong:** Network drops, app shows spinner forever or fails silently. No indication of what's happening. No way to reconnect without full page reload.
+**What goes wrong:** Legacy login item APIs are deprecated. macOS Ventura+ requires SMAppService API. Using old APIs fails silently or shows deprecation warnings.
 
-**Why it happens:** Happy path development - everything works with good connectivity. Error states and offline handling are "edge cases" that get deferred.
+**Why it happens:** Apple regularly deprecates APIs. Most Rust examples online use outdated approaches.
 
 **Consequences:**
-- Users don't know if they're connected
-- Lost work when connection drops
-- Manual refresh needed to recover
-- App feels unreliable
+- "Open at Login" toggle doesn't persist
+- App doesn't start after login despite setting
+- Console shows deprecation warnings
+- Works on older macOS, fails on Ventura+
+
+**Warning signs:**
+- Toggle says "enabled" but app doesn't launch
+- Works when tested manually, fails after reboot
+- macOS 12 works, macOS 13+ doesn't
+- No error returned, just silent failure
 
 **Prevention:**
-1. Show clear connection status indicator always visible
-2. Queue keystrokes during brief disconnections (with limit)
-3. Implement automatic reconnection with backoff
-4. Show reconnection progress and allow cancel
-5. Preserve terminal state across reconnections (see Pitfall 1)
+1. Use smappservice-rs crate for modern API
+2. Ensure proper bundle structure with Info.plist
+3. Set correct bundle identifier matching your main app
+4. Test on macOS Ventura (13+) specifically
+5. Handle errors gracefully (user may deny permission)
 
-**UX patterns:**
-```
-States to handle:
-- Connecting... (show progress)
-- Connected (subtle indicator)
-- Connection lost, reconnecting... (prominent, show attempt count)
-- Reconnection failed (show error, retry button)
-- Offline mode (if supported)
+**Phase:** Phase 5 (Polish/distribution) - but design app bundle structure early
 
-Keystroke queue:
-- Buffer up to 1KB of input during disconnect
-- Show "buffered input" indicator
-- Send on reconnect
-- Clear if reconnect fails (user must retype)
-```
-
-**Phase:** Address in Phase 3 (UI/UX Polish) - after core connection works
+**Sources:**
+- [smappservice-rs crate](https://crates.io/crates/smappservice-rs)
+- [Hopp blog - Rust app start on login](https://www.gethopp.app/blog/rust-app-start-on-login)
+- [theevilbit - SMAppService API](https://theevilbit.github.io/posts/smappservice/)
 
 ---
 
-### Pitfall 9: Blocking Operations on WebSocket Message Handler
+## Minor Pitfalls (Polish Issues)
 
-**What goes wrong:** Heavy processing in WebSocket message handler blocks the event loop. Terminal becomes unresponsive during large output (e.g., `cat large_file.txt`).
+### Pitfall 11: Universal Binary Creation is Manual
 
-**Why it happens:** All terminal data processing happens synchronously in the message handler. Large bursts of data freeze the UI.
+**What goes wrong:** Cargo doesn't natively produce universal (fat) binaries for macOS. You must build for both x86_64 and aarch64 separately, then combine with lipo.
 
 **Consequences:**
-- Terminal freezes during large output
-- Input blocked while processing output
-- Browser may show "page unresponsive" warning
-- Particularly bad with continuous output (logs, builds)
+- Users report "wrong architecture" errors
+- Only M1 OR Intel users can run the app
+- Build scripts break in CI
 
 **Prevention:**
-1. Chunk large data writes with requestAnimationFrame
-2. Use xterm.js flow control (it has built-in support)
-3. Consider Web Worker for data processing
-4. Implement backpressure to relay (pause/resume)
-5. Profile with large output scenarios
+- Add both targets: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+- Build both, then lipo -create -output
 
-**Chunking pattern:**
-```typescript
-const CHUNK_SIZE = 16384; // 16KB chunks
-let writeQueue: string[] = [];
-let isWriting = false;
+**Phase:** Phase 5 (Distribution) - set up universal binary in CI
 
-function queueWrite(data: string) {
-  writeQueue.push(data);
-  if (!isWriting) {
-    processQueue();
-  }
-}
-
-function processQueue() {
-  if (writeQueue.length === 0) {
-    isWriting = false;
-    return;
-  }
-
-  isWriting = true;
-  const chunk = writeQueue.shift()!;
-
-  if (chunk.length > CHUNK_SIZE) {
-    writeQueue.unshift(chunk.slice(CHUNK_SIZE));
-    terminal.write(chunk.slice(0, CHUNK_SIZE));
-  } else {
-    terminal.write(chunk);
-  }
-
-  requestAnimationFrame(processQueue);
-}
-```
-
-**Phase:** Address in Phase 2 (Terminal Rendering) - test with large output
+**Sources:**
+- [Alacritty PR #4683](https://github.com/alacritty/alacritty/pull/4683)
+- [Rust Forum - Universal macOS applications](https://users.rust-lang.org/t/universal-macos-applications/51740)
 
 ---
 
-### Pitfall 10: Incorrect Character Encoding Handling
+### Pitfall 12: Hook Error Cascades in Zsh
 
-**What goes wrong:** Non-ASCII characters display as garbage. Emoji broken. International characters fail. Or: binary data in terminal causes corruption.
-
-**Why it happens:** Encoding mismatches between: shell locale, PTY settings, WebSocket message encoding, xterm.js expectations. Usually assumes UTF-8 everywhere but one component doesn't comply.
-
-**Consequences:**
-- Non-English users can't use the terminal
-- Filenames with special characters show incorrectly
-- Git diff with emoji shows garbage
-- Programming languages with unicode (Python, JS) break
+**What goes wrong:** An error in any zsh hook function prevents subsequent hooks from running.
 
 **Prevention:**
-1. Ensure UTF-8 throughout: PTY, shell, relay, WebSocket all configured UTF-8
-2. Set `LANG` and `LC_ALL` environment variables on PTY
-3. Use binary WebSocket frames (not text) to avoid encoding issues
-4. Handle binary data separately (don't feed to terminal as-is)
-5. Test with emoji, CJK characters, RTL text
+- Wrap hook code in error handling: { your_code } || true
+- Fail silently with logging rather than throwing errors
 
-**Environment setup:**
-```typescript
-// When spawning PTY on Mac client
-const pty = spawn(shell, [], {
-  env: {
-    ...process.env,
-    LANG: 'en_US.UTF-8',
-    LC_ALL: 'en_US.UTF-8',
-    TERM: 'xterm-256color',
-  },
-  encoding: 'utf8',
-});
+**Phase:** Phase 2 (Shell integration) - defensive coding in hook script
 
-// WebSocket: use binary frames
-ws.binaryType = 'arraybuffer';
+**Sources:**
+- [Zsh Hook documentation](https://zsh.sourceforge.io/Doc/Release/Functions.html)
 
-// Decode properly on receive
-ws.onmessage = (event) => {
-  const data = new TextDecoder('utf-8').decode(event.data);
-  terminal.write(data);
-};
+---
+
+### Pitfall 13: Non-Interactive Shell Sourcing
+
+**What goes wrong:** Shell integration sourced from .zshrc doesn't load in non-interactive shells.
+
+**Prevention:**
+- Detect interactive shell: [[ -o interactive ]] || return
+- Document that integration is for interactive use only
+
+**Phase:** Phase 2 (Shell integration) - document behavior clearly
+
+**Sources:**
+- [Arch Wiki - Zsh](https://wiki.archlinux.org/title/Zsh)
+
+---
+
+### Pitfall 14: WebSocket Backpressure
+
+**What goes wrong:** If the client can't process terminal output as fast as it's produced, buffers grow unbounded.
+
+**Prevention:**
+- Implement flow control / backpressure signaling
+- Use bounded channels with drop-oldest policy
+- Pause PTY reading when WebSocket buffer is full
+
+**Phase:** Phase 3 (WebSocket relay) - design protocol with flow control
+
+**Sources:**
+- [WebSocket Backpressure article](https://skylinecodes.substack.com/p/backpressure-in-websocket-streams)
+
+---
+
+### Pitfall 15: rust-embed Debug Mode Behavior
+
+**What goes wrong:** In debug mode with default settings, rust-embed reads files from disk at runtime instead of embedding.
+
+**Prevention:**
+- Be aware of this behavior (it's intentional for faster dev builds)
+- Test release builds, not just debug
+- Or enable debug-embed feature to always embed
+
+**Phase:** Phase 4 (Embedded web UI) - understand rust-embed behavior
+
+**Sources:**
+- [rust-embed documentation](https://docs.rs/rust-embed/)
+
+---
+
+## macOS-Specific Concerns
+
+### Code Signing and Distribution Checklist
+
+| Requirement | When Needed | Notes |
+|-------------|-------------|-------|
+| Developer ID certificate | Any distribution | $99/year Apple Developer Program |
+| Code signing | All distribution | codesign -s "Developer ID" |
+| Hardened Runtime | Notarization | --options runtime flag |
+| Entitlements.plist | Protected APIs | Include with codesign |
+| Notarization | Outside App Store | xcrun notarytool submit |
+| Stapling | Offline verification | xcrun stapler staple |
+| Universal binary | Support Intel + M1 | lipo -create |
+
+### Permission Categories (TCC)
+
+| Permission | TCC Category | Needed For | Programmatic? |
+|------------|--------------|------------|---------------|
+| Accessibility | kTCCServiceAccessibility | UI control | NO |
+| Automation | kTCCServiceAppleEvents | AppleScript | NO |
+| Full Disk Access | kTCCServiceSystemPolicyAllFiles | Files | NO |
+| Screen Recording | kTCCServiceScreenCapture | Capture | NO |
+
+TCC permissions CANNOT be granted programmatically. User must approve via System Preferences.
+
+### Gatekeeper Bypass (Development Only)
+
+```bash
+# Remove quarantine from specific app (safe)
+xattr -d com.apple.quarantine /path/to/app.app
+
+# Disable Gatekeeper entirely (risky, temporary only)
+sudo spctl --master-disable
 ```
 
-**Phase:** Address in Phase 1 (Infrastructure) - configure correctly from start
-
 ---
 
-## Minor Pitfalls
+## Shell Integration Edge Cases
 
-Issues that cause annoyance but are readily fixable.
+### What Can Go Wrong with .zshrc Hook
 
----
+| Scenario | Problem | Mitigation |
+|----------|---------|------------|
+| oh-my-zsh loaded after hook | Hooks overwritten | Load integration after oh-my-zsh |
+| Powerlevel10k instant prompt | Race condition | Disable instant prompt or load early |
+| Syntax errors in .zshrc | Integration never loads | Provide standalone source command |
+| Multiple terminal apps | Hook conflicts | Use unique function names |
+| Non-login interactive shell | Different startup file | Also add to .zprofile if needed |
+| tmux/screen sessions | Different PTY behavior | Test in multiplexed environments |
+| SSH sessions | TERM different | Handle various TERM values |
+| nvm/pyenv/rbenv | Hook ordering | Document load order |
 
-### Pitfall 11: Terminal Cursor Style Not Matching User Preference
+### Zsh Startup File Order
 
-**What goes wrong:** Cursor is block when user prefers line. Blink behavior doesn't match local terminal. Feels "off" to power users.
-
-**Prevention:** Make cursor style configurable, sync with common terminal preferences.
-
-**Phase:** Phase 3 (UI/UX Polish)
-
----
-
-### Pitfall 12: No Visual Bell Support
-
-**What goes wrong:** Programs that use bell for alerts don't notify user. User misses important events.
-
-**Prevention:** Implement visual bell (flash) and optional audio. Make configurable.
-
-**Phase:** Phase 3 (UI/UX Polish)
-
----
-
-### Pitfall 13: Selection/Copy Doesn't Include Full Scrollback
-
-**What goes wrong:** User can only copy visible text, not text scrolled off screen.
-
-**Prevention:** Use xterm.js selection manager properly, allow selecting into scrollback.
-
-**Phase:** Phase 2 (Terminal Rendering)
-
----
-
-### Pitfall 14: No Session Persistence/Reconnection
-
-**What goes wrong:** Browser refresh loses everything. Tab accidentally closed = session gone.
-
-**Prevention:** Implement session persistence on relay, reconnect to existing PTY on page load if available.
-
-**Phase:** Phase 3 (Advanced Features) - nice to have
-
----
-
-### Pitfall 15: Font Loading Flash
-
-**What goes wrong:** Terminal briefly shows in wrong font, then re-renders. Looks janky.
-
-**Prevention:** Load monospace font before creating terminal. Use font loading API.
-
-**Phase:** Phase 2 (Terminal Rendering)
+```
+Login + Interactive:    zshenv -> zprofile -> zshrc -> zlogin
+Non-login Interactive:  zshenv -> zshrc
+Login + Non-interactive: zshenv -> zprofile
+Non-login + Non-inter:  zshenv (only)
+```
 
 ---
 
 ## Phase-Specific Warning Summary
 
-| Phase | Topic | Likely Pitfalls | Priority |
-|-------|-------|-----------------|----------|
-| Phase 1 | Connection Infrastructure | #1 (State sync), #5 (Three-party), #3 (Auth tokens), #10 (Encoding) | CRITICAL |
-| Phase 2 | Terminal Rendering | #2 (Resize), #4 (Memory), #6 (Input), #7 (WebGL), #9 (Blocking) | HIGH |
-| Phase 3 | UI/UX Polish | #8 (Offline handling), #11-15 (Minor) | MEDIUM |
-| Phase 4 | Hardening | Revisit all, load testing, security audit | HIGH |
+| Phase | Primary Pitfalls to Address |
+|-------|----------------------------|
+| Phase 1: Menu bar skeleton | #1 Main thread, signing infrastructure |
+| Phase 2: Shell integration | #2 PTY blocking, #5 hooks, #9 UTF-8, #12-13 |
+| Phase 3: WebSocket relay | #6 SIGWINCH, #7 reconnection, #14 backpressure |
+| Phase 4: Embedded web UI | #8 binary size, #15 rust-embed |
+| Phase 5: Distribution | #3 notarization, #4 TCC, #10 login items, #11 universal |
 
 ---
 
 ## Pre-Implementation Checklist
 
-Before building each component, verify:
+**Phase 1 (Menu Bar):**
+- [ ] Threading architecture decided (main for Cocoa, background for Tokio)
+- [ ] Developer ID certificate obtained (or planned)
+- [ ] Bundle identifier chosen and documented
 
-**Connection Layer:**
-- [ ] End-to-end heartbeat designed (not just relay ping)
-- [ ] Reconnection includes state recovery plan
-- [ ] Auth uses short-lived tickets, not URL tokens
-- [ ] Three-party state machine documented
+**Phase 2 (Shell Integration):**
+- [ ] PTY I/O uses spawn_blocking or dedicated threads
+- [ ] Shell hook uses add-zsh-hook pattern
+- [ ] Locale (LANG, LC_ALL) set on PTY spawn
+- [ ] Tested with oh-my-zsh and Powerlevel10k
 
-**Terminal Layer:**
-- [ ] Scrollback limit set explicitly
-- [ ] WebGL fallback to canvas implemented
-- [ ] Resize debounced with confirmation
-- [ ] Key combo test matrix created
+**Phase 3 (WebSocket):**
+- [ ] Resize protocol includes TIOCSWINSZ update
+- [ ] Reconnection with exponential backoff implemented
+- [ ] Backpressure / flow control considered
+- [ ] Heartbeat for connection health
 
-**UX Layer:**
-- [ ] Connection state visible to user
-- [ ] Error states have recovery actions
-- [ ] Disconnection doesn't lose buffered input
-- [ ] Works on mobile browsers
+**Phase 4 (Embedded UI):**
+- [ ] Cargo.toml release profile optimized for size
+- [ ] Assets minified before embedding
+- [ ] Tested both debug and release builds
+
+**Phase 5 (Distribution):**
+- [ ] Notarization workflow tested end-to-end
+- [ ] Universal binary script working in CI
+- [ ] TCC permission flow documented for users
+- [ ] SMAppService login item tested on Ventura+
 
 ---
 
 ## Sources
 
-- Training knowledge of xterm.js common issues (MEDIUM confidence)
-- Domain experience with WebSocket architecture patterns (MEDIUM confidence)
-- Terminal emulation fundamentals (HIGH confidence - stable domain)
+### Primary Documentation
+- [Apple Developer - Code Signing](https://developer.apple.com/developer-id/)
+- [Apple Developer - Notarization](https://developer.apple.com/documentation/security/resolving-common-notarization-issues)
+- [objc2 crate documentation](https://docs.rs/objc2/)
+- [portable-pty crate documentation](https://docs.rs/portable-pty)
+- [Zsh Official Documentation](https://zsh.sourceforge.io/Doc/Release/Functions.html)
 
-**Note:** WebSearch and WebFetch were unavailable during research. Recommendations should be validated against current xterm.js documentation and community discussions before implementation.
+### Community Resources
+- [min-sized-rust guide](https://github.com/johnthagen/min-sized-rust)
+- [Tauri macOS distribution docs](https://v2.tauri.app/distribute/macos-application-bundle/)
+- [smappservice-rs for login items](https://www.gethopp.app/blog/rust-app-start-on-login)
+
+### Issue Discussions
+- [VSCode shell integration issues](https://github.com/microsoft/vscode/issues/146587)
+- [Tauri permission loss on updates](https://github.com/tauri-apps/tauri/issues/11085)
+- [tokio-tungstenite reconnection](https://github.com/snapview/tokio-tungstenite/issues/101)
+- [Rust Forum - PTY hangs](https://users.rust-lang.org/t/rust-pty-output-hangs-when-trying-to-read-command-output-in-terminal-emulator/102873)

@@ -1,520 +1,797 @@
-# Architecture Patterns
+# Architecture Research: Rust Terminal Remote
 
-**Domain:** Remote Terminal Control (Web-based iTerm2 remote access)
-**Researched:** 2026-02-04
-**Confidence:** MEDIUM (based on training data - external verification unavailable)
+**Domain:** Universal terminal remote control with shell integration
+**Researched:** 2026-02-06
+**Confidence:** MEDIUM-HIGH (Rust ecosystem verified, shell integration pattern needs prototyping)
 
-## System Overview
-
-Remote terminal control systems follow a three-tier relay architecture:
+## Component Overview
 
 ```
-+------------------+       +------------------+       +------------------+
-|   Mac Client     | <---> |   Cloud Relay    | <---> |    Browser       |
-| (iTerm2 control) |  WSS  | (session router) |  WSS  | (xterm.js UI)    |
-+------------------+       +------------------+       +------------------+
-        |
-        v
-  +------------+
-  |  iTerm2    |
-  |  (local)   |
-  +------------+
++------------------+                    +-------------------+
+|  Shell Session   |                    |     Browser       |
+|  (any terminal)  |                    |   (xterm.js UI)   |
++--------+---------+                    +---------+---------+
+         |                                        |
+         | Unix Domain Socket                     | WebSocket (WSS)
+         | (local IPC)                            |
+         v                                        v
++--------+---------+                    +---------+---------+
+|    Mac Client    |                    |   Relay Server    |
+| (menu bar app)   +<------------------>+  (Rust + Web UI)  |
+|   Rust binary    |    WebSocket       |   Rust binary     |
++------------------+                    +-------------------+
 ```
 
-## Component Boundaries
+**Three binaries:**
+1. **terminal-remote-attach** - Shell integration helper (Rust), lives in PATH
+2. **mac-client** - Menu bar app (Rust), manages sessions and relay connection
+3. **relay-server** - WebSocket server with embedded web UI (Rust)
 
-### Component 1: Mac Client (iTerm2 Bridge)
+## Shell Integration Design
 
-**Responsibility:** Interface between iTerm2 and the cloud relay
+### The Core Challenge
 
-| Subcomponent | Purpose |
-|-------------|---------|
-| iTerm2 API Client | Connects to iTerm2's Python API socket |
-| Session Manager | Tracks active tabs/windows/sessions |
-| Input Forwarder | Receives keystrokes from relay, sends to iTerm2 |
-| Output Streamer | Captures terminal output, forwards to relay |
-| Relay Connection | Maintains persistent WebSocket to cloud |
+Universal terminal support requires capturing I/O from shells running in ANY terminal emulator (iTerm2, Terminal.app, VS Code, Zed, etc.). Unlike the v1.0 iTerm2-specific coprocess approach, we cannot rely on terminal-specific APIs.
 
-**Communicates With:**
-- iTerm2 (local Unix socket via Python API)
-- Cloud Relay (outbound WebSocket)
+### Recommended Approach: PTY Interposition
 
-**Key Technical Details:**
-- iTerm2 exposes a Python API via `iterm2` library
-- Can enumerate windows, tabs, sessions
-- Can subscribe to session output via `async for`
-- Can send text/keystrokes to sessions
-- Supports coprocess and custom escape sequences
-
-**Confidence:** MEDIUM - iTerm2 Python API is well-documented, but specific capabilities should be verified against current docs
-
-### Component 2: Cloud Relay (Session Router)
-
-**Responsibility:** Route messages between Mac clients and browsers, manage session authentication
-
-| Subcomponent | Purpose |
-|-------------|---------|
-| WebSocket Server | Accept connections from both clients and browsers |
-| Session Registry | Map session codes to client connections |
-| Message Router | Forward messages bidirectionally |
-| Auth Handler | Validate session codes, manage permissions |
-| Heartbeat Manager | Detect disconnections, cleanup stale sessions |
-
-**Communicates With:**
-- Mac Client (inbound WebSocket from client)
-- Browser (inbound WebSocket from browser)
-
-**Key Design Decisions:**
-
-1. **Session Code Model:** Short-lived codes (like "ABC-123") that browsers use to connect
-2. **Stateless Routing:** Relay doesn't interpret terminal data, just forwards bytes
-3. **Connection Lifecycle:** Client registers, gets code, browser joins with code
-
-**Confidence:** HIGH - Standard WebSocket relay patterns
-
-### Component 3: Browser (Terminal UI)
-
-**Responsibility:** Render terminal, capture input, display session selector
-
-| Subcomponent | Purpose |
-|-------------|---------|
-| xterm.js Terminal | Render terminal output, capture keystrokes |
-| Session Selector UI | Show available tabs, allow switching |
-| Relay Connection | Maintain WebSocket to cloud relay |
-| Fit Addon | Auto-resize terminal to container |
-| Connection Status | Show connected/disconnected state |
-
-**Communicates With:**
-- Cloud Relay (outbound WebSocket)
-- User (keyboard/mouse input, visual output)
-
-**Key Technical Details:**
-- xterm.js is the standard web terminal emulator (used by VS Code, etc.)
-- Handles ANSI escape sequences, colors, cursor movement
-- Has addon system for fit, search, weblinks
-- `terminal.write()` for output, `terminal.onData()` for input
-
-**Confidence:** HIGH - xterm.js is well-established
-
-## Data Flow
-
-### Flow 1: Terminal Output (iTerm2 to Browser)
+The shell integration script creates a PTY layer between the terminal emulator and the user's shell, enabling I/O capture without terminal-specific APIs.
 
 ```
-iTerm2 Session
-    |
-    | (Python API: async for output)
-    v
-Mac Client: Output Streamer
-    |
-    | WebSocket message: {type: "output", sessionId, data}
-    v
-Cloud Relay: Message Router
-    |
-    | Forward to connected browser(s)
-    v
-Browser: Relay Connection
-    |
-    | terminal.write(data)
-    v
-xterm.js Terminal (renders)
++------------------+     +-----------------------+     +----------------+
+| Terminal App     |     | terminal-remote-attach|     | User's Shell   |
+| (iTerm2, etc.)   |<--->| (PTY master owner)    |<--->| (zsh on PTY    |
+| owns outer PTY   |     | relays + copies       |     |  slave)        |
++------------------+     +----------+------------+     +----------------+
+                                    |
+                                    | Unix Socket
+                                    v
+                         +----------+------------+
+                         |      Mac Client       |
+                         +----------+------------+
+                                    |
+                                    | WebSocket
+                                    v
+                         +----------+------------+
+                         |    Relay Server       |
+                         +----------+------------+
 ```
 
-**Message Format:**
-```json
-{
-  "type": "output",
-  "sessionId": "session-uuid",
-  "data": "\u001b[32mHello World\u001b[0m\n"
+### IPC Mechanism: Unix Domain Socket
+
+**Why Unix sockets over alternatives:**
+
+| Mechanism | Pros | Cons | Decision |
+|-----------|------|------|----------|
+| Unix Domain Socket | Fast, bidirectional, file-based discovery | Unix-only | **Recommended** |
+| Named Pipe (FIFO) | Simple | Unidirectional, need two | No |
+| TCP localhost | Cross-platform | Port conflicts, firewall | No |
+| Shared Memory | Fastest | Complex synchronization | Overkill |
+
+**Socket location:** `/tmp/terminal-remote.sock` (or `$XDG_RUNTIME_DIR/terminal-remote.sock`)
+
+**Protocol:** Length-prefixed JSON messages over the socket.
+
+```rust
+// Message framing: 4-byte little-endian length prefix + JSON payload
+struct Message {
+    msg_type: MessageType,
+    session_id: String,
+    payload: serde_json::Value,
+}
+
+enum MessageType {
+    Register,       // New session connecting
+    Unregister,     // Session disconnecting
+    TerminalData,   // PTY output (shell -> mac-client)
+    TerminalInput,  // Keyboard input (mac-client -> shell)
+    Resize,         // Terminal size change
+    Heartbeat,      // Keep-alive
 }
 ```
 
-### Flow 2: Keyboard Input (Browser to iTerm2)
+### Session Lifecycle
 
 ```
-User types keystroke
-    |
-    | terminal.onData(callback)
-    v
-Browser: Input Handler
-    |
-    | WebSocket message: {type: "input", sessionId, data}
-    v
-Cloud Relay: Message Router
-    |
-    | Forward to Mac client
-    v
-Mac Client: Input Forwarder
-    |
-    | session.async_send_text(data)
-    v
-iTerm2 Session (receives input)
+1. Shell starts (.zshrc executed)
+   |
+   v
+2. Check for mac-client socket
+   |-- Socket missing --> Normal shell (no integration)
+   |-- Socket exists -->
+   |
+   v
+3. terminal-remote-attach connects to mac-client
+   |
+   v
+4. Create PTY pair (master + slave)
+   |
+   v
+5. Fork: child execs user's shell on PTY slave
+   |
+   v
+6. Parent (attach binary):
+   - Registers session with mac-client (sends session_id, tty, shell)
+   - Enters relay loop:
+     - stdin -> PTY master (user typing)
+     - PTY master -> stdout (terminal display)
+     - PTY master -> mac-client socket (I/O copy)
+     - mac-client socket -> PTY master (remote input)
+   |
+   v
+7. On shell exit: send Unregister, cleanup, exit
 ```
 
-**Message Format:**
-```json
-{
-  "type": "input",
-  "sessionId": "session-uuid",
-  "data": "ls -la\r"
-}
+### Shell Integration Script
+
+**User's .zshrc addition (one line):**
+
+```zsh
+# Terminal Remote integration
+[[ -S /tmp/terminal-remote.sock ]] && exec terminal-remote-attach
 ```
 
-### Flow 3: Session Discovery (List Available Tabs)
+**How it works:**
+1. `-S` tests if the socket file exists (mac-client is running)
+2. `exec` replaces the current shell with `terminal-remote-attach`
+3. `terminal-remote-attach` then runs the user's real shell as a child
 
-```
-Browser requests session list
-    |
-    v
-Cloud Relay: Forward request to Mac client
-    |
-    v
-Mac Client: Session Manager
-    |
-    | Enumerate via iTerm2 API:
-    | - app.windows
-    | - window.tabs
-    | - tab.sessions
-    v
-Mac Client: Send session list
-    |
-    v
-Cloud Relay: Forward to browser
-    |
-    v
-Browser: Render session selector
-```
+**Fallback behavior:** When mac-client isn't running, the socket doesn't exist, and the shell starts normally. Zero overhead.
 
-**Session List Message:**
-```json
-{
-  "type": "sessions",
-  "sessions": [
-    {
-      "id": "session-uuid-1",
-      "name": "zsh",
-      "windowTitle": "Terminal",
-      "tabTitle": "zsh",
-      "isActive": true
-    },
-    {
-      "id": "session-uuid-2",
-      "name": "vim",
-      "windowTitle": "Terminal",
-      "tabTitle": "vim file.txt",
-      "isActive": false
+### terminal-remote-attach Binary Design
+
+```rust
+// Rust implementation using portable-pty or nix crate
+
+use nix::pty::{openpty, OpenptyResult};
+use nix::unistd::{fork, ForkResult, execvp};
+use tokio::net::UnixStream;
+
+async fn main() -> Result<()> {
+    // 1. Connect to mac-client
+    let socket = UnixStream::connect("/tmp/terminal-remote.sock").await?;
+
+    // 2. Create PTY
+    let OpenptyResult { master, slave } = openpty(None, None)?;
+
+    // 3. Fork and exec shell
+    match unsafe { fork()? } {
+        ForkResult::Child => {
+            // Set up slave as controlling terminal
+            // exec user's shell
+        }
+        ForkResult::Parent { child } => {
+            // Generate session ID
+            let session_id = uuid::Uuid::new_v4().to_string();
+
+            // Register with mac-client
+            send_message(&socket, Message::Register {
+                session_id: session_id.clone(),
+                shell: std::env::var("SHELL")?,
+                pid: child.as_raw(),
+            }).await?;
+
+            // Enter relay loop
+            relay_loop(master, socket, session_id).await?;
+        }
     }
-  ]
+}
+
+async fn relay_loop(
+    pty_master: OwnedFd,
+    socket: UnixStream,
+    session_id: String,
+) -> Result<()> {
+    // Use tokio for async I/O multiplexing:
+    // - Read from stdin -> write to PTY master
+    // - Read from PTY master -> write to stdout AND socket
+    // - Read from socket -> write to PTY master
 }
 ```
 
-### Flow 4: Session Switch
+**Key crates:**
+- `nix` or `portable-pty` for PTY operations
+- `tokio` for async I/O
+- `serde_json` for message serialization
 
-```
-User clicks different tab in browser
-    |
-    v
-Browser: Send switch request
-    |
-    | {type: "switch", sessionId: "new-session-uuid"}
-    v
-Cloud Relay: Update routing, forward
-    |
-    v
-Mac Client: Update active session
-    |
-    | Start streaming output from new session
-    | Optionally: send current screen contents
-    v
-Browser: Receives new session output
-```
+## Mac Client Design
 
-### Flow 5: Connection Establishment
+### Menu Bar Integration
 
-```
-1. Mac Client starts
-   |
-   v
-2. Client connects to Relay
-   |
-   | {type: "register", clientId: "..."}
-   v
-3. Relay generates session code
-   |
-   | Response: {type: "registered", code: "ABC-123"}
-   v
-4. Client displays code to user
-   |
-   v
-5. User enters code in browser
-   |
-   v
-6. Browser connects to Relay with code
-   |
-   | {type: "join", code: "ABC-123"}
-   v
-7. Relay links browser to client
-   |
-   | Response: {type: "joined", sessions: [...]}
-   v
-8. Bidirectional streaming begins
+**Recommended approach:** [tray-item](https://lib.rs/crates/tray-item) crate for cross-platform menu bar support, or [tauri](https://tauri.app/) for a more full-featured solution.
+
+For a minimal menu bar app without a full UI framework:
+
+```rust
+use tray_item::TrayItem;
+
+fn main() {
+    let mut tray = TrayItem::new("Terminal Remote", "icon").unwrap();
+
+    // Display session code
+    tray.add_label(&format!("Code: {}", session_code)).unwrap();
+
+    // Session list submenu
+    tray.add_menu_item("Sessions", || {
+        // Show connected sessions
+    }).unwrap();
+
+    // Quit option
+    tray.add_menu_item("Quit", || {
+        std::process::exit(0);
+    }).unwrap();
+
+    // Run event loop
+    loop {
+        std::thread::park();
+    }
+}
 ```
 
-## Recommended Architecture
+**For Tauri-based approach (recommended for richer UI):**
+- Use Tauri's system tray API
+- Can show session list in a popup window
+- Supports native macOS notifications
 
-### Protocol Design
+### Session Management
 
-Use a simple JSON message protocol over WebSocket:
+```rust
+struct SessionManager {
+    sessions: HashMap<String, Session>,
+    socket_listener: UnixListener,
+    relay_connection: Option<WebSocket>,
+}
 
-```typescript
-// Message types
-type Message =
-  | { type: "register"; clientId: string }
-  | { type: "registered"; code: string }
-  | { type: "join"; code: string }
-  | { type: "joined"; sessions: Session[] }
-  | { type: "output"; sessionId: string; data: string }
-  | { type: "input"; sessionId: string; data: string }
-  | { type: "switch"; sessionId: string }
-  | { type: "sessions"; sessions: Session[] }
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "ping" }
-  | { type: "pong" }
-  | { type: "error"; message: string };
+struct Session {
+    id: String,
+    shell: String,
+    pid: u32,
+    connected_at: Instant,
+    stream: UnixStream,  // Connection to terminal-remote-attach
+}
+
+impl SessionManager {
+    async fn accept_session(&mut self) -> Result<()> {
+        let (stream, _) = self.socket_listener.accept().await?;
+
+        // Read registration message
+        let msg: Message = read_message(&stream).await?;
+
+        if let MessageType::Register { session_id, shell, pid } = msg.msg_type {
+            let session = Session {
+                id: session_id.clone(),
+                shell,
+                pid,
+                connected_at: Instant::now(),
+                stream,
+            };
+
+            self.sessions.insert(session_id.clone(), session);
+
+            // Notify relay of new session
+            if let Some(relay) = &self.relay_connection {
+                relay.send(RelayMessage::SessionConnected {
+                    session_id,
+                    name: shell,
+                }).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn route_terminal_data(&mut self, session_id: &str, data: &[u8]) {
+        // Forward to relay for browser display
+        if let Some(relay) = &self.relay_connection {
+            relay.send(RelayMessage::TerminalData {
+                session_id: session_id.to_string(),
+                data: data.to_vec(),
+            }).await.ok();
+        }
+    }
+
+    async fn route_remote_input(&mut self, session_id: &str, data: &[u8]) {
+        // Forward from browser to specific session
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            send_message(&session.stream, Message::TerminalInput {
+                session_id: session_id.to_string(),
+                data: data.to_vec(),
+            }).await.ok();
+        }
+    }
+}
 ```
 
-### State Management
+### Relay Communication
 
-**Relay State (minimal):**
-```
-sessions: Map<code, {
-  clientConnection: WebSocket,
-  browserConnections: Set<WebSocket>,
-  createdAt: Date
-}>
-```
+```rust
+use tokio_tungstenite::{connect_async, WebSocketStream};
 
-**Client State:**
-```
-- Connected relay WebSocket
-- Active iTerm2 app connection
-- Map of session IDs to iTerm2 session objects
-- Current streaming session
-```
+struct RelayClient {
+    ws: WebSocketStream<...>,
+    session_code: String,
+}
 
-**Browser State:**
-```
-- Connected relay WebSocket
-- xterm.js Terminal instance
-- Available sessions list
-- Current session ID
-- Connection status
-```
+impl RelayClient {
+    async fn connect(relay_url: &str) -> Result<Self> {
+        let (ws, _) = connect_async(relay_url).await?;
 
-## Patterns to Follow
+        // Register with relay, receive session code
+        ws.send(Message::text(json!({
+            "type": "register",
+            "client_id": machine_id(),
+        }).to_string())).await?;
 
-### Pattern 1: Message Framing with Type Discrimination
+        let response = ws.next().await?;
+        let session_code = parse_session_code(&response)?;
 
-**What:** Use a `type` field to discriminate message kinds
-**When:** All WebSocket communication
-**Why:** Enables type-safe handling, easy to extend
+        Ok(Self { ws, session_code })
+    }
 
-```typescript
-// Good
-{ "type": "output", "sessionId": "...", "data": "..." }
-
-// Avoid - no type discrimination
-{ "output": "...", "session": "..." }
-```
-
-### Pattern 2: Heartbeat for Connection Health
-
-**What:** Regular ping/pong to detect dead connections
-**When:** All WebSocket connections
-**Why:** WebSocket doesn't detect dead connections quickly
-
-```typescript
-// Every 30 seconds
-client.send({ type: "ping" });
-// Expect pong within 5 seconds or mark disconnected
+    async fn run(&mut self, session_manager: Arc<Mutex<SessionManager>>) {
+        loop {
+            select! {
+                // Receive from relay (browser input)
+                Some(msg) = self.ws.next() => {
+                    self.handle_relay_message(msg, &session_manager).await;
+                }
+                // Send terminal data to relay
+                Some(data) = session_manager.lock().await.next_data() => {
+                    self.ws.send(data).await.ok();
+                }
+            }
+        }
+    }
+}
 ```
 
-### Pattern 3: Reconnection with Backoff
+## Relay Server Design
 
-**What:** Auto-reconnect with exponential backoff
-**When:** Client or browser loses connection
-**Why:** Network interruptions are common
+### Technology Choice: Axum
 
-```typescript
-const reconnect = (attempt: number) => {
-  const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-  setTimeout(() => connect(), delay);
+**Why Axum:**
+
+| Framework | WebSocket | Static Files | Embedded Assets | Performance | Decision |
+|-----------|-----------|--------------|-----------------|-------------|----------|
+| Axum | Native (tokio) | tower-http | rust-embed | Excellent | **Recommended** |
+| Actix-web | Good | Good | Good | Excellent | Alternative |
+| Warp | Good | Good | Limited | Good | No |
+
+**Key crates:**
+- `axum` - Web framework
+- `axum-extra` - WebSocket support
+- `rust-embed` or `memory-serve` - Embed static assets at compile time
+- `tokio` - Async runtime
+- `tower-http` - Middleware (compression, CORS)
+
+### WebSocket Handling
+
+```rust
+use axum::{
+    extract::ws::{WebSocket, WebSocketUpgrade},
+    routing::get,
+    Router,
 };
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+
+    // Determine client type from first message
+    let first_msg = receiver.next().await;
+
+    match parse_client_type(&first_msg) {
+        ClientType::MacClient => {
+            handle_mac_client(sender, receiver, state).await;
+        }
+        ClientType::Browser { session_code } => {
+            handle_browser(sender, receiver, session_code, state).await;
+        }
+    }
+}
+
+async fn handle_mac_client(
+    sender: SplitSink<...>,
+    receiver: SplitStream<...>,
+    state: AppState,
+) {
+    // Generate session code
+    let code = generate_session_code();
+
+    // Store client connection
+    state.clients.lock().await.insert(code.clone(), ClientConnection {
+        sender,
+        sessions: HashMap::new(),
+    });
+
+    // Send code to client
+    sender.send(Message::text(json!({
+        "type": "registered",
+        "code": code,
+    }).to_string())).await.ok();
+
+    // Process incoming messages
+    while let Some(msg) = receiver.next().await {
+        // Route terminal data to subscribed browsers
+    }
+}
+
+async fn handle_browser(
+    sender: SplitSink<...>,
+    receiver: SplitStream<...>,
+    session_code: String,
+    state: AppState,
+) {
+    // Find mac-client with this code
+    let client = state.clients.lock().await.get(&session_code);
+
+    if client.is_none() {
+        sender.send(Message::text(json!({
+            "type": "error",
+            "message": "Invalid session code",
+        }).to_string())).await.ok();
+        return;
+    }
+
+    // Subscribe browser to session updates
+    // Process browser input, forward to mac-client
+}
 ```
 
-### Pattern 4: Binary vs Text Data
+### Static Asset Serving with rust-embed
 
-**What:** Use text WebSocket frames for terminal data
-**When:** Terminal I/O
-**Why:** Terminal data is text-based (with ANSI escapes)
+```rust
+use axum::{
+    body::Body,
+    http::{header, StatusCode},
+    response::Response,
+    routing::get,
+    Router,
+};
+use rust_embed::RustEmbed;
 
-Note: If supporting file transfers later, use binary frames for that.
+#[derive(RustEmbed)]
+#[folder = "ui/dist"]  // SvelteKit build output
+struct Assets;
 
-### Pattern 5: Lazy Session Streaming
+async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
 
-**What:** Only stream output from the active session
-**When:** Multiple sessions available
-**Why:** Reduces bandwidth and processing
+    match Assets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path)
+                .first_or_octet_stream();
 
-```python
-# Only subscribe to output from the active session
-async with session.output_listener() as listener:
-    async for notification in listener:
-        send_to_relay(notification.content)
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data.to_vec()))
+                .unwrap()
+        }
+        None => {
+            // SPA fallback: serve index.html for client-side routing
+            if let Some(content) = Assets::get("index.html") {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .body(Body::from(content.data.to_vec()))
+                    .unwrap()
+            } else {
+                Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::empty())
+                    .unwrap()
+            }
+        }
+    }
+}
+
+fn app() -> Router {
+    Router::new()
+        .route("/ws", get(ws_handler))
+        .fallback(static_handler)
+}
 ```
 
-## Anti-Patterns to Avoid
+### Session Routing
 
-### Anti-Pattern 1: Buffering All Output on Relay
+```rust
+struct AppState {
+    // Session code -> Mac client connection
+    clients: Mutex<HashMap<String, ClientConnection>>,
+    // Session code -> Browser connections
+    browsers: Mutex<HashMap<String, Vec<BrowserConnection>>>,
+}
 
-**What:** Storing terminal history in the relay
-**Why bad:**
-- Memory grows unbounded
-- Terminal scrollback can be huge
-- Not the relay's responsibility
-**Instead:** Let xterm.js handle scrollback locally. For new browser connections, request screen refresh from client.
+struct ClientConnection {
+    sender: SplitSink<WebSocket, Message>,
+    sessions: HashMap<String, SessionInfo>,
+}
 
-### Anti-Pattern 2: Polling for Sessions
+struct BrowserConnection {
+    sender: SplitSink<WebSocket, Message>,
+    subscribed_session: Option<String>,
+}
 
-**What:** Browser repeatedly asking for session list
-**Why bad:** Wastes bandwidth, slow updates
-**Instead:** Push session changes from client when tabs open/close
+impl AppState {
+    async fn route_terminal_data(
+        &self,
+        session_code: &str,
+        session_id: &str,
+        data: &[u8],
+    ) {
+        let browsers = self.browsers.lock().await;
 
-### Anti-Pattern 3: Direct Client IP Exposure
+        if let Some(browser_list) = browsers.get(session_code) {
+            for browser in browser_list {
+                // Send to browsers subscribed to this session
+                if browser.subscribed_session.as_deref() == Some(session_id) {
+                    browser.sender.send(Message::binary(data.to_vec())).await.ok();
+                }
+            }
+        }
+    }
 
-**What:** Browser connecting directly to Mac client
-**Why bad:** Requires port forwarding, exposes home IP
-**Instead:** Always route through cloud relay
+    async fn route_browser_input(
+        &self,
+        session_code: &str,
+        session_id: &str,
+        data: &[u8],
+    ) {
+        let clients = self.clients.lock().await;
 
-### Anti-Pattern 4: Synchronous iTerm2 API Calls
-
-**What:** Blocking while waiting for iTerm2 response
-**Why bad:** iTerm2 API is async, blocking kills performance
-**Instead:** Use async/await throughout Python client
-
-### Anti-Pattern 5: Unbounded Session Codes
-
-**What:** Session codes that never expire
-**Why bad:** Security risk, stale connections
-**Instead:** Codes expire after connection or timeout (e.g., 5 minutes unused)
-
-## Component Dependencies (Build Order)
-
-Based on architecture analysis, recommended build order:
-
-```
-Phase 1: Foundation
-├── Message protocol definition (shared types)
-├── Basic WebSocket relay (accepts connections)
-└── Minimal browser terminal (xterm.js renders)
-
-Phase 2: Mac Client
-├── iTerm2 API connection
-├── Session enumeration
-├── Output streaming from one session
-└── Input forwarding to one session
-
-Phase 3: Full Integration
-├── Session code auth flow
-├── Session switching
-├── Multiple browser support
-└── Reconnection handling
-
-Phase 4: Polish
-├── Terminal resize handling
-├── Connection status UI
-├── Error recovery
-└── Performance optimization
+        if let Some(client) = clients.get(session_code) {
+            client.sender.send(Message::text(json!({
+                "type": "input",
+                "session_id": session_id,
+                "data": base64::encode(data),
+            }).to_string())).await.ok();
+        }
+    }
+}
 ```
 
-**Rationale:**
-1. **Relay first:** Both client and browser depend on it
-2. **Browser basic:** Faster iteration testing with mock data
-3. **Mac client:** Complex iTerm2 integration
-4. **Integration:** Connect all pieces
-5. **Polish:** Reliability and UX
+## Data Flows
 
-## Scalability Considerations
+### Terminal Output: Shell -> Browser
 
-| Concern | 1 User | 10 Users | 100 Users |
-|---------|--------|----------|-----------|
-| Relay Memory | Minimal | ~50MB | Consider Redis for session registry |
-| Latency | <50ms | <50ms | <100ms (add regional relays) |
-| Auth | Simple codes | Simple codes | Consider accounts + persistent codes |
-
-For initial product, single relay instance handles hundreds of concurrent sessions easily.
-
-## Security Considerations
-
-| Concern | Mitigation |
-|---------|------------|
-| Session code guessing | Use 6+ character codes, rate limit attempts |
-| Man-in-middle | WSS (TLS) required for all connections |
-| Unauthorized access | Codes expire, single-use after join |
-| Terminal injection | No server-side interpretation of terminal data |
-| Client impersonation | Client generates unique ID, relay validates |
-
-## iTerm2 API Reference
-
-The Mac client relies heavily on iTerm2's Python API:
-
-```python
-import iterm2
-
-async def main(connection):
-    app = await iterm2.async_get_app(connection)
-
-    # Get all windows
-    for window in app.windows:
-        for tab in window.tabs:
-            for session in tab.sessions:
-                # session.session_id - unique identifier
-                # session.name - shell name
-                # await session.async_send_text("hello")
-                # await session.async_get_screen_contents()
-                pass
-
-    # Subscribe to output
-    async with session.output_listener() as listener:
-        async for notification in listener:
-            # notification.content contains new output
-            pass
-
-iterm2.run_until_complete(main)
+```
+1. User runs command in terminal
+   |
+   v
+2. Shell produces output on PTY slave
+   |
+   v
+3. terminal-remote-attach reads from PTY master
+   |
+   v
+4. Data written to:
+   - stdout (displayed in terminal)
+   - Unix socket (sent to mac-client)
+   |
+   v
+5. Mac-client receives TerminalData message
+   |
+   v
+6. Mac-client forwards over WebSocket to relay
+   |
+   v
+7. Relay routes to subscribed browser(s)
+   |
+   v
+8. Browser receives WebSocket message
+   |
+   v
+9. xterm.js terminal.write(data)
 ```
 
-**Key API Methods:**
-- `iterm2.async_get_app()` - Get app object
-- `app.windows` - List of windows
-- `window.tabs` - List of tabs in window
-- `tab.sessions` - List of sessions in tab
-- `session.async_send_text(str)` - Send input
-- `session.async_get_screen_contents()` - Get current screen
-- `session.output_listener()` - Subscribe to output stream
+**Latency targets:**
+- Local (shell -> mac-client): <1ms
+- WAN (mac-client -> browser): 50-200ms depending on network
 
-**Confidence:** MEDIUM - API surface is correct but should verify exact method signatures against current iTerm2 Python API docs
+### User Input: Browser -> Shell
+
+```
+1. User types in browser (xterm.js)
+   |
+   v
+2. terminal.onData() callback fires
+   |
+   v
+3. Browser sends WebSocket message to relay
+   |
+   v
+4. Relay routes to mac-client by session code
+   |
+   v
+5. Mac-client receives input message
+   |
+   v
+6. Mac-client sends to terminal-remote-attach via Unix socket
+   |
+   v
+7. terminal-remote-attach writes to PTY master
+   |
+   v
+8. Shell receives input as if typed locally
+```
+
+### Session Discovery
+
+```
+Browser connects to relay with session code
+         |
+         v
+Relay validates code, finds mac-client
+         |
+         v
+Relay requests session list from mac-client
+         |
+         v
+Mac-client returns list of connected sessions:
+[
+  { id: "abc123", shell: "zsh", connected: "5m ago" },
+  { id: "def456", shell: "zsh", connected: "2m ago" },
+]
+         |
+         v
+Relay forwards to browser
+         |
+         v
+Browser displays session picker UI
+         |
+         v
+User selects session
+         |
+         v
+Browser subscribes to session, starts receiving output
+```
+
+## Build Order
+
+Based on dependencies and testability, recommended implementation sequence:
+
+### Phase 1: Relay Server Foundation (Week 1)
+
+**Goal:** Deployable relay that serves web UI and handles WebSocket connections.
+
+1. **Axum server skeleton** with WebSocket endpoint
+2. **Static asset embedding** (rust-embed) for xterm.js web UI
+3. **Session code generation** and client registration
+4. **Basic message routing** between clients
+
+**Test:** Browser can connect, see UI, enter session code.
+
+### Phase 2: Mac Client Core (Week 2)
+
+**Goal:** Menu bar app that connects to relay and receives session code.
+
+1. **Menu bar integration** (tray-item or Tauri)
+2. **WebSocket client** to relay (tokio-tungstenite)
+3. **Session code display** in menu bar
+4. **Unix socket listener** for local sessions
+
+**Test:** Mac client shows in menu bar with session code.
+
+### Phase 3: Shell Integration (Week 3)
+
+**Goal:** Sessions auto-connect when mac-client is running.
+
+1. **terminal-remote-attach binary** with PTY handling
+2. **Unix socket client** connecting to mac-client
+3. **Session registration** protocol
+4. **I/O relay loop** (stdin/stdout <-> PTY <-> socket)
+
+**Test:** New terminal sessions appear in mac-client session list.
+
+### Phase 4: End-to-End Data Flow (Week 4)
+
+**Goal:** Browser can view and control terminal sessions.
+
+1. **Terminal data routing** through full pipeline
+2. **Browser input routing** back to shell
+3. **Session switching** in browser
+4. **Terminal resize** propagation
+
+**Test:** Full remote terminal control working.
+
+### Phase 5: Polish and Reliability (Week 5+)
+
+1. **Reconnection handling** for all connections
+2. **Heartbeat/keepalive** for connection health
+3. **Error recovery** and graceful degradation
+4. **Performance optimization** (batching, compression)
+
+## Crate Recommendations
+
+| Component | Crate | Version | Confidence |
+|-----------|-------|---------|------------|
+| Async runtime | tokio | 1.x | HIGH |
+| PTY handling | portable-pty | 0.9.x | HIGH |
+| PTY (alternative) | nix | 0.29.x | HIGH |
+| Unix sockets | tokio (built-in) | 1.x | HIGH |
+| WebSocket client | tokio-tungstenite | 0.24.x | HIGH |
+| Web framework | axum | 0.8.x | HIGH |
+| Static embedding | rust-embed | 8.x | HIGH |
+| Menu bar | tray-item | 0.10.x | MEDIUM |
+| Menu bar (alternative) | tauri | 2.x | HIGH |
+| Serialization | serde, serde_json | 1.x | HIGH |
+
+## Open Questions
+
+### 1. terminal-remote-attach Distribution
+
+**Question:** How do users install the `terminal-remote-attach` binary?
+
+**Options:**
+- Bundled with mac-client installer
+- Homebrew formula
+- Manual download from releases
+
+**Recommendation:** Mac-client installer copies binary to `/usr/local/bin/`.
+
+### 2. Raw Mode vs Line Mode
+
+**Question:** Does terminal-remote-attach need to put stdin/stdout in raw mode?
+
+**Answer:** Yes. The attach binary must set the terminal to raw mode to pass through all escape sequences, special keys (Ctrl+C, etc.), and not interpret newlines.
+
+```rust
+use termios::{tcsetattr, Termios, TCSANOW, ECHO, ICANON, ISIG};
+
+fn set_raw_mode(fd: RawFd) -> Result<Termios> {
+    let original = Termios::from_fd(fd)?;
+    let mut raw = original.clone();
+    raw.c_lflag &= !(ECHO | ICANON | ISIG);
+    tcsetattr(fd, TCSANOW, &raw)?;
+    Ok(original)  // Return original to restore later
+}
+```
+
+### 3. Multiple Browser Viewers
+
+**Question:** Can multiple browsers view the same session?
+
+**Answer:** Yes. The relay maintains a list of browser connections per session code. All subscribed browsers receive the same terminal data.
+
+### 4. Clipboard Support
+
+**Question:** How does copy/paste work with remote terminal?
+
+**Answer:**
+- Browser copy: Standard browser selection + Cmd/Ctrl+C (xterm.js handles this)
+- Browser paste: Cmd/Ctrl+V sends text as terminal input
+- OSC 52 clipboard: If shell sends OSC 52 sequence, could forward to browser clipboard API (advanced feature)
 
 ## Sources
 
-- xterm.js architecture based on established patterns (VS Code terminal, many web IDEs)
-- iTerm2 Python API based on official documentation patterns
-- WebSocket relay patterns from common real-time architecture practices
-- **Note:** External source verification was unavailable; confidence is MEDIUM based on training data
+### Shell Integration & PTY
+- [Kitty Shell Integration](https://sw.kovidgoyal.net/kitty/shell-integration/) - OSC escape sequence patterns
+- [iTerm2 Shell Integration](https://iterm2.com/shell_integration.html) - Hook implementation reference
+- [zsh-async](https://github.com/mafredri/zsh-async) - zpty pseudo-terminal usage
+- [Linux terminals, tty, pty and shell](https://dev.to/napicella/linux-terminals-tty-pty-and-shell-192e) - PTY architecture
 
-## Verification Needed
+### Rust Libraries
+- [portable-pty](https://lib.rs/crates/portable-pty) - Cross-platform PTY crate
+- [nix](https://docs.rs/nix/latest/nix/pty/) - Low-level Unix PTY operations
+- [tokio UnixStream](https://docs.rs/tokio/latest/tokio/net/struct.UnixStream.html) - Async Unix sockets
+- [tokio-unix-ipc](https://github.com/mitsuhiko/tokio-unix-ipc) - Higher-level IPC wrapper
+- [tray-item](https://lib.rs/crates/tray-item) - Simple menu bar API
+- [Tauri menubar example](https://github.com/4gray/tauri-menubar-app) - Tauri system tray
+- [rust-embed with Axum](https://github.com/pyrossh/rust-embed/blob/master/examples/axum.rs) - Static asset embedding
+- [axum-embed](https://docs.rs/axum-embed/latest/axum_embed/) - Axum integration for rust-embed
+- [memory-serve](https://docs.rs/memory-serve/latest/memory_serve/) - Alternative asset serving
 
-Before implementation, verify:
-1. [ ] Current iTerm2 Python API method signatures
-2. [ ] xterm.js v5+ API changes (addons, lifecycle)
-3. [ ] WebSocket library choices for Node.js relay (ws, uWebSockets)
-4. [ ] SvelteKit WebSocket integration patterns
+### Web Framework
+- [Axum static file server](https://github.com/tokio-rs/axum/blob/main/examples/static-file-server/src/main.rs) - Official example
+- [Axum WebSocket example](https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs) - WebSocket handling
+- [Serving Static Files with Axum](https://benw.is/posts/serving-static-files-with-axum) - Tutorial
+
+---
+
+*Research date: 2026-02-06*
+*Confidence: MEDIUM-HIGH - Rust ecosystem well-verified, PTY interposition pattern is established but needs prototyping for this specific use case*

@@ -335,16 +335,16 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
         let (ipc_event_tx, ipc_event_rx) = mpsc::channel::<IpcEvent>();
 
-        // Create command channels for sending data to relay and IPC
+        // Create command channels
         let (relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
         let (ipc_cmd_tx, ipc_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<IpcCommand>();
 
         // Create relay client
         let mut relay = RelayClient::new(relay_url, relay_event_tx, relay_cmd_rx);
 
-        // Store command senders for use by data forwarding (Task 3 will wire these up)
-        let _relay_cmd_tx = relay_cmd_tx;
-        let _ipc_cmd_tx = ipc_cmd_tx;
+        // Store command senders for data forwarding
+        let relay_cmd_tx_for_ipc = relay_cmd_tx.clone();
+        let ipc_cmd_tx_for_relay = ipc_cmd_tx.clone();
 
         // Create IPC server
         let mut ipc = match IpcServer::new(ipc_event_tx, ipc_cmd_rx).await {
@@ -370,12 +370,12 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         // Spawn event forwarding tasks
         let ui_tx_relay = ui_tx.clone();
         let relay_forward_handle = tokio::task::spawn_blocking(move || {
-            forward_relay_events(relay_event_rx, ui_tx_relay);
+            forward_relay_events(relay_event_rx, ui_tx_relay, ipc_cmd_tx_for_relay);
         });
 
         let ui_tx_ipc = ui_tx.clone();
         let ipc_forward_handle = tokio::task::spawn_blocking(move || {
-            forward_ipc_events(ipc_event_rx, ui_tx_ipc);
+            forward_ipc_events(ipc_event_rx, ui_tx_ipc, relay_cmd_tx_for_ipc);
         });
 
         // Wait for shutdown signal
@@ -385,11 +385,13 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
                     info!("Shutdown command received");
                     break;
                 }
-                Ok(BackgroundCommand::SendTerminalData { .. }) => {
-                    // Handled directly by IPC -> relay data forwarding (Task 3)
+                Ok(BackgroundCommand::SendTerminalData { session_id, data }) => {
+                    // Forward terminal data to relay
+                    let _ = relay_cmd_tx.send(RelayCommand::SendTerminalData { session_id, data });
                 }
-                Ok(BackgroundCommand::SendToShell { .. }) => {
-                    // Handled directly by relay -> IPC data forwarding (Task 3)
+                Ok(BackgroundCommand::SendToShell { session_id, data }) => {
+                    // Forward terminal data to shell via IPC
+                    let _ = ipc_cmd_tx.send(IpcCommand::WriteToSession { session_id, data });
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     // No command, continue
@@ -421,7 +423,10 @@ async fn run_relay_only(
     bg_rx: mpsc::Receiver<BackgroundCommand>,
 ) {
     let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
-    let (_relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
+    let (relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
+
+    // Create a dummy IPC command sender (unused in relay-only mode)
+    let (dummy_ipc_tx, _dummy_ipc_rx) = tokio::sync::mpsc::unbounded_channel::<IpcCommand>();
 
     // Create a new relay with the fresh channel
     let relay_url = std::env::var("RELAY_URL")
@@ -434,18 +439,19 @@ async fn run_relay_only(
 
     let ui_tx_relay = ui_tx.clone();
     let relay_forward_handle = tokio::task::spawn_blocking(move || {
-        forward_relay_events(relay_event_rx, ui_tx_relay);
+        forward_relay_events(relay_event_rx, ui_tx_relay, dummy_ipc_tx);
     });
 
     // Wait for shutdown
     loop {
         match bg_rx.try_recv() {
             Ok(BackgroundCommand::Shutdown) => break,
-            Ok(BackgroundCommand::SendTerminalData { .. }) => {
-                // No IPC server in relay-only mode
+            Ok(BackgroundCommand::SendTerminalData { session_id, data }) => {
+                let _ = relay_cmd_tx.send(RelayCommand::SendTerminalData { session_id, data });
             }
             Ok(BackgroundCommand::SendToShell { .. }) => {
-                // No IPC server in relay-only mode
+                // IPC not available in relay-only mode
+                warn!("Cannot send to shell: IPC not available");
             }
             Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {}
@@ -461,9 +467,12 @@ async fn run_relay_only(
 ///
 /// This runs in a spawn_blocking task because std::sync::mpsc::recv() is blocking.
 /// Converts RelayEvent from the relay module into UiEvent for the main thread.
-/// Exits when either the relay event channel closes (sender dropped) or the
-/// UI channel closes (main thread exited).
-fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+/// Also forwards terminal data from relay to IPC (browser -> shell).
+fn forward_relay_events(
+    rx: mpsc::Receiver<RelayEvent>,
+    ui_tx: mpsc::Sender<UiEvent>,
+    ipc_cmd_tx: tokio::sync::mpsc::UnboundedSender<IpcCommand>,
+) {
     debug!("Relay event forwarder starting");
     loop {
         match rx.recv() {
@@ -476,6 +485,11 @@ fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEv
                     RelayEvent::BrowserDisconnected(id) => UiEvent::BrowserDisconnected(id),
                     RelayEvent::Error(msg) => UiEvent::RelayError(msg),
                     RelayEvent::TerminalData { session_id, data } => {
+                        // Forward to IPC for shell
+                        let _ = ipc_cmd_tx.send(IpcCommand::WriteToSession {
+                            session_id: session_id.clone(),
+                            data: data.clone(),
+                        });
                         UiEvent::TerminalDataFromRelay { session_id, data }
                     }
                 };
@@ -497,9 +511,12 @@ fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEv
 ///
 /// This runs in a spawn_blocking task because std::sync::mpsc::recv() is blocking.
 /// Converts IpcEvent from the ipc module into UiEvent for the main thread.
-/// Exits when either the IPC event channel closes (sender dropped) or the
-/// UI channel closes (main thread exited).
-fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+/// Also forwards terminal data from IPC to relay (shell -> browser).
+fn forward_ipc_events(
+    rx: mpsc::Receiver<IpcEvent>,
+    ui_tx: mpsc::Sender<UiEvent>,
+    relay_cmd_tx: tokio::sync::mpsc::UnboundedSender<RelayCommand>,
+) {
     debug!("IPC event forwarder starting");
     loop {
         match rx.recv() {
@@ -513,6 +530,11 @@ fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>
                     }
                     IpcEvent::SessionCountChanged(count) => UiEvent::ShellCountChanged(count),
                     IpcEvent::TerminalData { session_id, data } => {
+                        // Forward to relay for browser
+                        let _ = relay_cmd_tx.send(RelayCommand::SendTerminalData {
+                            session_id: session_id.clone(),
+                            data: data.clone(),
+                        });
                         UiEvent::TerminalDataFromShell { session_id, data }
                     }
                     IpcEvent::Error(msg) => UiEvent::IpcError(msg),

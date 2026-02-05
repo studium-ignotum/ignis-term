@@ -1,7 +1,16 @@
 [package]
 name = "mac-client"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
+
+# Build .app bundle:
+# 1. cargo build --release --manifest-path mac-client/Cargo.toml
+# 2. ./mac-client/build-bundle.sh
+# Or manually:
+#   mkdir -p "Terminal Remote.app/Contents/MacOS"
+#   cp target/release/mac-client "Terminal Remote.app/Contents/MacOS/"
+#   cp mac-client/Info.plist "Terminal Remote.app/Contents/"
+#   open "Terminal Remote.app"
 
 [dependencies]
 tray-icon = "0.21"

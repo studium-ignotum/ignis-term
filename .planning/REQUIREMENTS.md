@@ -1,7 +1,7 @@
 # Requirements: Terminal Remote v2.0
 
 **Defined:** 2026-02-06
-**Core Value:** Control any terminal session from anywhere — works with any terminal app.
+**Core Value:** Control any terminal session from anywhere -- works with any terminal app.
 
 ## v2.0 Requirements
 
@@ -146,4 +146,4 @@ Deferred to post-v2.0 release.
 
 ---
 *Requirements defined: 2026-02-06*
-*Last updated: 2026-02-06 after milestone v2.0 scoping*
+*Last updated: 2026-02-06 after v2.0 roadmap creation*

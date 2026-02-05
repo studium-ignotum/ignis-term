@@ -1,2 +1,2 @@
 mod connection;
-pub use connection::{RelayClient, RelayEvent};
+pub use connection::{RelayClient, RelayCommand, RelayEvent};

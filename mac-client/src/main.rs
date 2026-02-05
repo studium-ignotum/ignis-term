@@ -356,7 +356,13 @@ async fn run_relay_only(
 }
 
 /// Forward relay events to the UI channel.
+///
+/// This runs in a spawn_blocking task because std::sync::mpsc::recv() is blocking.
+/// Converts RelayEvent from the relay module into UiEvent for the main thread.
+/// Exits when either the relay event channel closes (sender dropped) or the
+/// UI channel closes (main thread exited).
 fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+    debug!("Relay event forwarder starting");
     loop {
         match rx.recv() {
             Ok(event) => {
@@ -379,10 +385,17 @@ fn forward_relay_events(rx: mpsc::Receiver<RelayEvent>, ui_tx: mpsc::Sender<UiEv
             }
         }
     }
+    debug!("Relay event forwarder exiting");
 }
 
 /// Forward IPC events to the UI channel.
+///
+/// This runs in a spawn_blocking task because std::sync::mpsc::recv() is blocking.
+/// Converts IpcEvent from the ipc module into UiEvent for the main thread.
+/// Exits when either the IPC event channel closes (sender dropped) or the
+/// UI channel closes (main thread exited).
 fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>) {
+    debug!("IPC event forwarder starting");
     loop {
         match rx.recv() {
             Ok(event) => {
@@ -407,4 +420,5 @@ fn forward_ipc_events(rx: mpsc::Receiver<IpcEvent>, ui_tx: mpsc::Sender<UiEvent>
             }
         }
     }
+    debug!("IPC event forwarder exiting");
 }

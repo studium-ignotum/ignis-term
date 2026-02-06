@@ -18,6 +18,17 @@ pub struct ShellRegistration {
     pub pid: u32,
 }
 
+/// Messages sent by shell integration after initial registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ShellMessage {
+    /// Rename the session (sent on directory change)
+    Rename {
+        /// New session name
+        name: String,
+    },
+}
+
 /// Represents an active shell session connected via IPC.
 ///
 /// Holds the write half of the Unix stream for sending data back to the shell.
@@ -46,6 +57,11 @@ impl Session {
     /// Get the session's display name.
     pub fn name(&self) -> &str {
         &self.registration.name
+    }
+
+    /// Update the session's display name (called on directory change).
+    pub fn set_name(&mut self, name: String) {
+        self.registration.name = name;
     }
 
     /// Get how long this session has been connected, in seconds.

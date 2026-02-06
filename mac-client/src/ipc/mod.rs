@@ -5,12 +5,12 @@
 
 mod session;
 
-pub use session::{Session, ShellRegistration};
+pub use session::{Session, ShellMessage, ShellRegistration};
 
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -26,6 +26,8 @@ pub enum IpcEvent {
     SessionConnected { session_id: String, name: String },
     /// A shell session disconnected.
     SessionDisconnected { session_id: String },
+    /// A shell session was renamed (directory change).
+    SessionRenamed { session_id: String, name: String },
     /// Total session count changed.
     SessionCountChanged(usize),
     /// Terminal data received from a shell session.
@@ -224,9 +226,9 @@ impl IpcServer {
         Ok(())
     }
 
-    /// Read terminal data from a shell session continuously.
+    /// Read messages from a shell session continuously.
     ///
-    /// Emits TerminalData events for each chunk of data received.
+    /// Handles JSON protocol messages (like rename) and raw terminal data.
     /// Handles session cleanup on disconnect.
     async fn read_terminal_data(
         mut reader: BufReader<tokio::net::unix::OwnedReadHalf>,
@@ -234,22 +236,44 @@ impl IpcServer {
         event_tx: Sender<IpcEvent>,
         sessions: Arc<Mutex<HashMap<String, Session>>>,
     ) {
-        let mut buf = [0u8; 4096];
+        let mut line = String::new();
 
         loop {
-            match reader.read(&mut buf).await {
+            line.clear();
+            match reader.read_line(&mut line).await {
                 Ok(0) => {
                     // EOF - connection closed
                     debug!("Session {} disconnected (EOF)", session_id);
                     break;
                 }
-                Ok(n) => {
-                    // Emit terminal data event
-                    debug!("Read {} bytes from session {}", n, session_id);
-                    let _ = event_tx.send(IpcEvent::TerminalData {
-                        session_id: session_id.clone(),
-                        data: buf[..n].to_vec(),
-                    });
+                Ok(_) => {
+                    // Try to parse as JSON message
+                    if let Ok(msg) = serde_json::from_str::<ShellMessage>(&line) {
+                        match msg {
+                            ShellMessage::Rename { name } => {
+                                info!("Session {} renamed to: {}", session_id, name);
+                                // Update session name
+                                {
+                                    let mut sessions_guard = sessions.lock().await;
+                                    if let Some(session) = sessions_guard.get_mut(&session_id) {
+                                        session.set_name(name.clone());
+                                    }
+                                }
+                                // Notify UI
+                                let _ = event_tx.send(IpcEvent::SessionRenamed {
+                                    session_id: session_id.clone(),
+                                    name,
+                                });
+                            }
+                        }
+                    } else {
+                        // Not a JSON message, treat as terminal data
+                        debug!("Read {} bytes from session {}", line.len(), session_id);
+                        let _ = event_tx.send(IpcEvent::TerminalData {
+                            session_id: session_id.clone(),
+                            data: line.as_bytes().to_vec(),
+                        });
+                    }
                 }
                 Err(e) => {
                     debug!("Session {} read error: {}", session_id, e);

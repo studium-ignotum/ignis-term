@@ -30,6 +30,8 @@ pub enum UiEvent {
     ShellConnected { session_id: String, name: String },
     /// A shell session disconnected
     ShellDisconnected { session_id: String },
+    /// A shell session was renamed (directory change)
+    ShellRenamed { session_id: String, name: String },
     /// Shell session count changed
     ShellCountChanged(usize),
     /// Error from IPC server

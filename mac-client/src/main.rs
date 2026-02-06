@@ -170,6 +170,9 @@ impl App {
                             app_state.shell_count = app_state.shell_count.saturating_sub(1);
                             app_state.update_count_display();
                         }
+                        UiEvent::ShellRenamed { session_id, name } => {
+                            info!("Shell renamed: {} -> {}", session_id, name);
+                        }
                         UiEvent::ShellCountChanged(count) => {
                             debug!("Shell count changed: {}", count);
                             app_state.shell_count = count;
@@ -634,6 +637,9 @@ fn forward_ipc_events(
                     }
                     IpcEvent::SessionDisconnected { session_id } => {
                         UiEvent::ShellDisconnected { session_id }
+                    }
+                    IpcEvent::SessionRenamed { session_id, name } => {
+                        UiEvent::ShellRenamed { session_id, name }
                     }
                     IpcEvent::SessionCountChanged(count) => UiEvent::ShellCountChanged(count),
                     IpcEvent::TerminalData { session_id, data } => {

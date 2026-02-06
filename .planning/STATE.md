@@ -9,12 +9,14 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 8 - Installer & Setup (1/2 plans complete)
-Plan: 08-01 complete
-Status: In progress
-Last activity: 2026-02-06 -- Completed 08-01-PLAN.md (Installer & Uninstaller)
+Phase: 8 - Installer & Setup (2/2 plans complete)
+Plan: 08-02 complete
+Status: Phase complete
+Last activity: 2026-02-06 -- Completed 08-02-PLAN.md (Homebrew Cask & Release Workflow)
 
-Progress: [########--] 50% (phase 8)
+Progress: [##########] 100% (phase 8)
+
+Overall v2.0: [████████████████████████░] 96% (24/25 plans -- 07-03 remaining)
 
 ## v2.0 Overview
 
@@ -26,7 +28,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 | 5 | Mac Client | 13 (CLIENT) | COMPLETE (6/6 plans) |
 | 6 | Shell Integration | 9 (SHELL) | COMPLETE (2/2 plans) |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | IN PROGRESS (2/3 plans) |
-| 8 | Installer & Setup | - | IN PROGRESS (1/2 plans) |
+| 8 | Installer & Setup | - | COMPLETE (2/2 plans) |
 
 ## v1.0 Summary (Node.js/SvelteKit)
 
@@ -111,6 +113,10 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | grep -qF for idempotent source lines | Prevents duplicate entries on re-run | 08-01 |
 | LaunchAgent plist for login startup | Simpler than SMAppService, easily reversible | 08-01 |
 | Default "n" for piped stdin | curl\|sh can't read interactive input | 08-01 |
+| Cask not Formula for .app bundle | mac-client is GUI app, Casks are correct for .app bundles | 08-02 |
+| pnpm for web UI in CI | Matches existing pnpm-lock.yaml in relay-server/web-ui | 08-02 |
+| Staging directory for tar packaging | More reliable than tar -s path substitution across platforms | 08-02 |
+| macos-14 for ARM64, macos-13 for Intel | Native compilation on each architecture, no cross-compilation | 08-02 |
 
 ### v2.0 Stack (from research)
 
@@ -139,6 +145,6 @@ None -- Shell integration installed and verified working with mac-client.
 
 ## Session Continuity
 
-Last session: 2026-02-06T11:08:33Z
-Stopped at: Completed 08-01-PLAN.md (Installer & Uninstaller)
-Resume file: .planning/phases/08-installer-setup/08-02-PLAN.md
+Last session: 2026-02-06T11:09:23Z
+Stopped at: Completed 08-02-PLAN.md (Homebrew Cask & Release Workflow)
+Resume file: .planning/phases/07-web-ui-full-pipeline/07-03-PLAN.md

@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 6 - Shell Integration (1/3 plans complete)
-Plan: 01 complete
+Phase: 6 - Shell Integration (2/3 plans complete)
+Plan: 02 complete
 Status: In progress
-Last activity: 2026-02-06 -- Completed 06-01-PLAN.md (Shell Integration Scripts)
+Last activity: 2026-02-06 -- Completed 06-02-PLAN.md (Installation and Verification)
 
-Progress: [###-------] 33% (phase 6)
+Progress: [######----] 66% (phase 6)
 
 ## v2.0 Overview
 
@@ -95,6 +95,8 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | Background cat to hold socket open | Keeps nc connection alive until explicitly killed | 06-01 |
 | Session name format: dirname [PID] | Human-readable, unique per shell instance | 06-01 |
 | Prompt hooks for reconnection | Lightweight check every prompt vs dedicated thread | 06-01 |
+| Install to ~/.terminal-remote/ | User-local directory, standard pattern for shell tools | 06-02 |
+| Source line at END of rc file | Avoids conflicts with oh-my-zsh, starship, p10k | 06-02 |
 
 ### v2.0 Stack (from research)
 
@@ -119,10 +121,10 @@ None.
 
 ### Blockers/Concerns
 
-None -- Shell integration scripts created, ready for installation and testing.
+None -- Shell integration installed and verified working with mac-client.
 
 ## Session Continuity
 
-Last session: 2026-02-06T05:16:00Z
-Stopped at: Completed 06-01-PLAN.md (Shell Integration Scripts)
-Resume file: .planning/phases/06-shell-integration/06-02-PLAN.md
+Last session: 2026-02-06T05:35:00Z
+Stopped at: Completed 06-02-PLAN.md (Installation and Verification)
+Resume file: .planning/phases/06-shell-integration/06-03-PLAN.md

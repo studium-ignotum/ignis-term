@@ -241,15 +241,10 @@ async fn handle_proxy_connection(
     });
     info!(session_id = %session_id, "pty-proxy disconnected");
 
-    // Close the Terminal.app window (process already exited, window is dead)
-    let tty_for_close = tty.clone();
-    tokio::spawn(async move {
-        // Brief delay for Terminal.app to register the process exit
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-        tokio::task::spawn_blocking(move || {
-            close_terminal_window(&tty_for_close);
-        }).await.ok();
-    });
+    // Don't auto-close the Terminal.app window here. When the user types `exit`,
+    // Terminal.app handles the window according to its own preferences. We only
+    // force-close when the user explicitly clicks Close in the browser UI
+    // (handled by KillSession).
 
     result
 }
@@ -340,7 +335,7 @@ async fn send_frame(
 async fn process_commands(
     mut command_rx: mpsc::UnboundedReceiver<PtyCommand>,
     sessions: Arc<Mutex<HashMap<String, SessionHandle>>>,
-    _tty_map: TtyMap,
+    tty_map: TtyMap,
 ) {
     while let Some(cmd) = command_rx.recv().await {
         match cmd {
@@ -359,28 +354,35 @@ async fn process_commands(
                 }
             }
             PtyCommand::KillSession { session_id } => {
-                let mut sessions_guard = sessions.lock().await;
-                if let Some(session) = sessions_guard.get_mut(&session_id) {
-                    let pid = session.info.pid;
-                    info!(
-                        session_id = %session_id,
-                        pid = pid,
-                        "Closing pty-proxy session"
-                    );
-                    // Send close control message so pty-proxy exits gracefully.
-                    // Don't remove from HashMap — let handle_proxy_connection cleanup
-                    // when pty-proxy disconnects. This keeps the writer alive so
-                    // pty-proxy reads the close message before getting EOF.
-                    let msg = serde_json::json!({ "type": "close" });
-                    let json = serde_json::to_vec(&msg).unwrap();
-                    if let Err(e) = send_frame(&mut session.writer, &json).await {
-                        warn!(session_id = %session_id, error = %e, "Close message failed, killing by PID");
-                        unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-                    }
+                // Close the Terminal.app window FIRST — this kills the shell
+                // naturally and prevents Terminal.app from reopening a new shell
+                // (which happens when pty-proxy exits with code 0).
+                let tty = {
+                    let tty_guard = tty_map.lock().await;
+                    tty_guard.get(&session_id).cloned()
+                };
+
+                if let Some(tty) = tty {
+                    info!(session_id = %session_id, tty = %tty, "Closing terminal window first");
+                    tokio::task::spawn_blocking(move || {
+                        close_terminal_window_force(&tty);
+                    }).await.ok();
                 } else {
-                    info!(session_id = %session_id, "Session already disconnected, nothing to kill");
+                    // Fallback: send close message to pty-proxy directly
+                    let mut sessions_guard = sessions.lock().await;
+                    if let Some(session) = sessions_guard.get_mut(&session_id) {
+                        let pid = session.info.pid;
+                        info!(session_id = %session_id, pid = pid, "No TTY found, sending close to pty-proxy");
+                        let msg = serde_json::json!({ "type": "close" });
+                        let json = serde_json::to_vec(&msg).unwrap();
+                        if let Err(e) = send_frame(&mut session.writer, &json).await {
+                            warn!(session_id = %session_id, error = %e, "Close message failed, killing by PID");
+                            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                        }
+                    } else {
+                        info!(session_id = %session_id, "Session already disconnected, nothing to kill");
+                    }
                 }
-                drop(sessions_guard);
             }
             PtyCommand::Shutdown => {
                 info!("PTY manager shutting down");
@@ -397,29 +399,22 @@ async fn process_commands(
     }
 }
 
-/// Close a Terminal.app window by matching its TTY.
-/// Only closes windows where the process has already exited (busy is false),
-/// preventing a cycle where Terminal.app reuses the TTY for a replacement window.
-fn close_terminal_window(tty: &str) {
+/// Force-close a Terminal.app window by TTY — no `busy` check.
+/// Used when the browser explicitly requests closing a session.
+/// Closes the window first so Terminal.app kills the shell naturally,
+/// preventing the "reopen shell on exit" cycle.
+fn close_terminal_window_force(tty: &str) {
     if tty == "unknown" || tty.is_empty() {
         return;
     }
-    // Match by TTY AND require process to have exited (busy is false).
-    // This prevents closing a replacement window that Terminal.app may have
-    // opened with the same reused TTY number.
     let script = format!(
         r#"tell application "Terminal"
-    set windowsToClose to {{}}
     repeat with w in windows
         try
-            set t to first tab of w
-            if tty of t is "{tty}" and busy of t is false then
-                set end of windowsToClose to w
+            if tty of first tab of w is "{tty}" then
+                close w saving no
             end if
         end try
-    end repeat
-    repeat with w in windowsToClose
-        close w
     end repeat
 end tell"#,
         tty = tty
@@ -429,19 +424,14 @@ end tell"#,
         .arg(&script)
         .output()
     {
-        Ok(output) => {
-            if !output.status.success() {
-                warn!(
-                    "osascript close-window failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            } else {
-                info!(tty = %tty, "Terminal.app window closed");
-            }
+        Ok(output) if !output.status.success() => {
+            warn!(
+                "osascript force-close failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
-        Err(e) => {
-            warn!("Failed to run osascript for close-window: {}", e);
-        }
+        Err(e) => warn!("Failed to run osascript for force-close: {}", e),
+        _ => info!(tty = %tty, "Terminal window force-closed"),
     }
 }
 

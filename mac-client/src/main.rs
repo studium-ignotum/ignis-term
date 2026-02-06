@@ -696,10 +696,8 @@ fn forward_relay_events(
                         info!("Creating new terminal session");
                         match std::process::Command::new("osascript")
                             .arg("-e")
-                            .arg(r#"tell application "Terminal"
-    activate
-    do script ""
-end tell"#)
+                            .arg(r#"tell application "Terminal" to do script ""
+"#)
                             .output()
                         {
                             Ok(output) => {

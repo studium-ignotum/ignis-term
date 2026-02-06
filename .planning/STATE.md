@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 6 - Shell Integration (2/2 plans complete)
-Plan: Phase complete
-Status: Phase complete
-Last activity: 2026-02-06 -- Completed Phase 6 (Shell Integration)
+Phase: 7 - Web UI & Full Pipeline (1/3 plans complete)
+Plan: 07-01 complete
+Status: In progress
+Last activity: 2026-02-06 -- Completed 07-01-PLAN.md (Binary Protocol)
 
-Progress: [##########] 100% (phase 6)
+Progress: [###-------] 33% (phase 7)
 
 ## v2.0 Overview
 
@@ -25,7 +25,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 | 4 | Relay Server | 5 (RELAY) | COMPLETE (4/4 plans) |
 | 5 | Mac Client | 13 (CLIENT) | COMPLETE (6/6 plans) |
 | 6 | Shell Integration | 9 (SHELL) | COMPLETE (2/2 plans) |
-| 7 | Web UI & Full Pipeline | 9 (WEB) | Ready to plan |
+| 7 | Web UI & Full Pipeline | 9 (WEB) | IN PROGRESS (1/3 plans) |
 
 ## v1.0 Summary (Node.js/SvelteKit)
 
@@ -97,6 +97,9 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | Prompt hooks for reconnection | Lightweight check every prompt vs dedicated thread | 06-01 |
 | Install to ~/.terminal-remote/ | User-local directory, standard pattern for shell tools | 06-02 |
 | Source line at END of rc file | Avoids conflicts with oh-my-zsh, starship, p10k | 06-02 |
+| 1-byte length prefix for binary frames | Simple framing, max 255-byte session IDs | 07-01 |
+| snake_case auth message fields | Match Rust serde(rename_all = "snake_case") | 07-01 |
+| Keep v1 Join/Joined messages | Backwards compatibility during transition | 07-01 |
 
 ### v2.0 Stack (from research)
 
@@ -125,6 +128,6 @@ None -- Shell integration installed and verified working with mac-client.
 
 ## Session Continuity
 
-Last session: 2026-02-06T05:45:00Z
-Stopped at: Completed Phase 6 (Shell Integration)
-Resume file: .planning/phases/07-web-ui/ (to be created)
+Last session: 2026-02-06T06:36:00Z
+Stopped at: Completed 07-01-PLAN.md (Binary Protocol)
+Resume file: .planning/phases/07-web-ui-full-pipeline/07-02-PLAN.md

@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 7 - Web UI & Full Pipeline (2/3 plans complete)
-Plan: 07-02 complete
+Phase: 8 - Installer & Setup (1/2 plans complete)
+Plan: 08-01 complete
 Status: In progress
-Last activity: 2026-02-06 -- Completed 07-02-PLAN.md (WebSocket Context Refactor)
+Last activity: 2026-02-06 -- Completed 08-01-PLAN.md (Installer & Uninstaller)
 
-Progress: [######----] 66% (phase 7)
+Progress: [########--] 50% (phase 8)
 
 ## v2.0 Overview
 
@@ -26,6 +26,7 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 | 5 | Mac Client | 13 (CLIENT) | COMPLETE (6/6 plans) |
 | 6 | Shell Integration | 9 (SHELL) | COMPLETE (2/2 plans) |
 | 7 | Web UI & Full Pipeline | 9 (WEB) | IN PROGRESS (2/3 plans) |
+| 8 | Installer & Setup | - | IN PROGRESS (1/2 plans) |
 
 ## v1.0 Summary (Node.js/SvelteKit)
 
@@ -105,6 +106,11 @@ Phase 3 (performance) deferred -- starting v2.0 Rust rewrite instead.
 | Auto-switch first session | Automatically select first arriving session | 07-02 |
 | 5-second disconnect removal | Show disconnected briefly, then remove from list | 07-02 |
 | writeUtf8 for terminal data | Efficient binary writes in xterm.js 5.x | 07-02 |
+| Hard fail on missing Homebrew | No partial installs, cloudflared/tmux require brew | 08-01 |
+| Shell integration from release archive | Version-matched init scripts bundled with binaries | 08-01 |
+| grep -qF for idempotent source lines | Prevents duplicate entries on re-run | 08-01 |
+| LaunchAgent plist for login startup | Simpler than SMAppService, easily reversible | 08-01 |
+| Default "n" for piped stdin | curl\|sh can't read interactive input | 08-01 |
 
 ### v2.0 Stack (from research)
 
@@ -133,6 +139,6 @@ None -- Shell integration installed and verified working with mac-client.
 
 ## Session Continuity
 
-Last session: 2026-02-06T06:42:30Z
-Stopped at: Completed 07-02-PLAN.md (WebSocket Context Refactor)
-Resume file: .planning/phases/07-web-ui-full-pipeline/07-03-PLAN.md
+Last session: 2026-02-06T11:08:33Z
+Stopped at: Completed 08-01-PLAN.md (Installer & Uninstaller)
+Resume file: .planning/phases/08-installer-setup/08-02-PLAN.md

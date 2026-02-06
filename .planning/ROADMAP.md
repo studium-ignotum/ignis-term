@@ -22,7 +22,7 @@ This roadmap covers two milestones. Milestone v1.0 (Phases 1-3) delivered the in
 - [x] **Phase 5: Mac Client** - Menu bar app coordinating local sessions with relay
 - [x] **Phase 6: Shell Integration** - Universal terminal support via shell scripts
 - [ ] **Phase 7: Web UI & Full Pipeline** - Browser terminal interface with multi-session support
-- [ ] **Phase 8: Installer & Setup** - End-user onboarding with curl|sh installer and Homebrew tap
+- [x] **Phase 8: Installer & Setup** - End-user onboarding with curl|sh installer and Homebrew tap
 
 ## Phase Details
 
@@ -151,6 +151,7 @@ Plans:
 - [ ] 07-03-PLAN.md -- Build configuration & end-to-end verification (Wave 3)
 
 ### Phase 8: Installer & Setup (v2.0)
+**Status:** Complete
 **Goal**: End-user can install Terminal Remote with a single command
 **Depends on**: Phase 5, Phase 6
 **Success Criteria** (what must be TRUE):
@@ -164,8 +165,8 @@ Plans:
 **Plans:** 2 plans in 1 wave
 
 Plans:
-- [ ] 08-01-PLAN.md -- Install & uninstall scripts (Wave 1)
-- [ ] 08-02-PLAN.md -- Homebrew cask & release workflow (Wave 1)
+- [x] 08-01-PLAN.md -- Install & uninstall scripts (Wave 1)
+- [x] 08-02-PLAN.md -- Homebrew cask & release workflow (Wave 1)
 
 ## Progress
 
@@ -181,8 +182,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 5. Mac Client | 6/6 | Complete | 2026-02-06 |
 | 6. Shell Integration | 2/2 | Complete | 2026-02-06 |
 | 7. Web UI & Full Pipeline | 0/3 | Planned | - |
-| 8. Installer & Setup | 0/2 | Planned | - |
+| 8. Installer & Setup | 2/2 | Complete | 2026-02-06 |
 
 ---
 *Created: 2026-02-04*
-*Last updated: 2026-02-06 (Phase 6 complete - Shell Integration)*
+*Last updated: 2026-02-06 (Phase 8 complete - Installer & Setup)*

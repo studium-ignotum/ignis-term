@@ -9,6 +9,7 @@
 use image::ImageReader;
 use mac_client::app::{AppState, BackgroundCommand, UiEvent};
 use mac_client::ipc::{IpcCommand, IpcEvent, IpcServer};
+use mac_client::pty::{PtyCommand, PtyEvent, PtyManager};
 use mac_client::relay::{RelayClient, RelayCommand, RelayEvent};
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use smappservice_rs::{AppService, ServiceStatus, ServiceType};
@@ -25,6 +26,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
 // Menu item IDs
+const ID_NEW_TERMINAL: &str = "new_terminal";
 const ID_COPY_CODE: &str = "copy_code";
 const ID_LOGIN_ITEM: &str = "login_item";
 const ID_QUIT: &str = "quit";
@@ -45,6 +47,7 @@ struct App {
     ui_rx: Option<mpsc::Receiver<UiEvent>>,
     bg_handle: Option<thread::JoinHandle<()>>,
     copy_reset_time: Option<Instant>,
+    pty_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<PtyCommand>>,
 }
 
 impl App {
@@ -57,6 +60,7 @@ impl App {
             ui_rx: None,
             bg_handle: None,
             copy_reset_time: None,
+            pty_cmd_tx: None,
         }
     }
 
@@ -64,6 +68,16 @@ impl App {
         debug!("Menu event: {:?}", event);
 
         match event.id().0.as_str() {
+            ID_NEW_TERMINAL => {
+                info!("New terminal requested");
+                if let Some(pty_tx) = &self.pty_cmd_tx {
+                    if pty_tx.send(PtyCommand::SpawnShell).is_err() {
+                        error!("Failed to send spawn shell command");
+                    }
+                } else {
+                    warn!("PTY command channel not available");
+                }
+            }
             ID_COPY_CODE => {
                 if let Some(app_state) = &self.app_state {
                     if let Some(code) = &app_state.session_code {
@@ -291,10 +305,13 @@ fn main() {
     let (ui_tx, ui_rx) = mpsc::channel::<UiEvent>();
     let (bg_tx, bg_rx) = mpsc::channel::<BackgroundCommand>();
 
+    // Create PTY command channel (sender stays in main thread)
+    let (pty_cmd_tx, pty_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<PtyCommand>();
+
     // Spawn background thread with Tokio runtime
     let ui_tx_bg = ui_tx.clone();
     let bg_handle = thread::spawn(move || {
-        run_background_tasks(ui_tx_bg, bg_rx);
+        run_background_tasks(ui_tx_bg, bg_rx, pty_cmd_rx);
     });
 
     // Load icon from embedded bytes
@@ -320,6 +337,7 @@ fn main() {
     let sessions_item = MenuItem::new("Sessions: 0", false, None);
 
     // Action items
+    let new_terminal_item = MenuItem::with_id(ID_NEW_TERMINAL, "New Terminal", true, None);
     let copy_code_item = MenuItem::with_id(ID_COPY_CODE, "Copy Session Code", true, None);
 
     // Check current login item status and set initial checkbox state
@@ -338,6 +356,8 @@ fn main() {
         .expect("Failed to add sessions item");
     menu.append(&PredefinedMenuItem::separator())
         .expect("Failed to add separator");
+    menu.append(&new_terminal_item)
+        .expect("Failed to add new terminal item");
     menu.append(&copy_code_item)
         .expect("Failed to add copy item");
     menu.append(&PredefinedMenuItem::separator())
@@ -377,6 +397,7 @@ fn main() {
     app.bg_tx = Some(bg_tx);
     app.ui_rx = Some(ui_rx);
     app.bg_handle = Some(bg_handle);
+    app.pty_cmd_tx = Some(pty_cmd_tx);
 
     info!("Entering main event loop");
 
@@ -429,8 +450,12 @@ fn configure_login_item(enable: bool) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-/// Run background tasks (relay client and IPC server) on a Tokio runtime.
-fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<BackgroundCommand>) {
+/// Run background tasks (relay client, IPC server, and PTY manager) on a Tokio runtime.
+fn run_background_tasks(
+    ui_tx: mpsc::Sender<UiEvent>,
+    bg_rx: mpsc::Receiver<BackgroundCommand>,
+    pty_cmd_rx: tokio::sync::mpsc::UnboundedReceiver<PtyCommand>,
+) {
     info!("Background thread starting");
 
     let rt = Runtime::new().expect("Failed to create Tokio runtime");
@@ -454,7 +479,51 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
 
         // Store command senders for data forwarding
         let relay_cmd_tx_for_ipc = relay_cmd_tx.clone();
+        let relay_cmd_tx_for_pty = relay_cmd_tx.clone();
         let ipc_cmd_tx_for_relay = ipc_cmd_tx.clone();
+
+        // Create PTY manager
+        let (_pty_manager, mut pty_event_rx, pty_internal_cmd_tx) = PtyManager::new();
+
+        // Clone for relay forwarding (before move)
+        let pty_cmd_tx_for_relay = pty_internal_cmd_tx.clone();
+
+        // Forward PTY commands from main thread to PTY manager
+        let mut pty_cmd_rx = pty_cmd_rx;
+        let pty_forward_handle = tokio::spawn(async move {
+            while let Some(cmd) = pty_cmd_rx.recv().await {
+                if pty_internal_cmd_tx.send(cmd).is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Forward PTY events to relay (output -> browser)
+        let ui_tx_pty = ui_tx.clone();
+        let pty_event_handle = tokio::spawn(async move {
+            while let Some(event) = pty_event_rx.recv().await {
+                match event {
+                    PtyEvent::SessionCreated { session_id, name } => {
+                        info!("PTY session created: {} ({})", name, session_id);
+                        let _ = ui_tx_pty.send(UiEvent::ShellConnected {
+                            session_id: session_id.clone(),
+                            name,
+                        });
+                    }
+                    PtyEvent::SessionExited { session_id } => {
+                        info!("PTY session exited: {}", session_id);
+                        let _ = ui_tx_pty.send(UiEvent::ShellDisconnected { session_id });
+                    }
+                    PtyEvent::Output { session_id, data } => {
+                        // Forward PTY output to relay for browser
+                        let _ = relay_cmd_tx_for_pty.send(RelayCommand::SendTerminalData {
+                            session_id,
+                            data,
+                        });
+                    }
+                }
+            }
+        });
 
         // Create IPC server
         let mut ipc = match IpcServer::new(ipc_event_tx, ipc_cmd_rx).await {
@@ -462,8 +531,38 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
             Err(e) => {
                 error!("Failed to create IPC server: {}", e);
                 let _ = ui_tx.send(UiEvent::IpcError(format!("Failed to start IPC: {}", e)));
-                // Continue without IPC - relay still works
-                return run_relay_only(relay, ui_tx, bg_rx).await;
+                // Continue without IPC - relay and PTY still work
+                warn!("Continuing without IPC server");
+                // Create a dummy IPC that does nothing
+                let (dummy_tx, dummy_rx) = tokio::sync::mpsc::unbounded_channel::<IpcCommand>();
+                drop(dummy_tx);
+                drop(dummy_rx);
+                // Fall through to run without IPC
+                let ipc_handle: tokio::task::JoinHandle<()> = tokio::spawn(async {});
+                let relay_handle = tokio::spawn(async move { relay.run().await; });
+                let ui_tx_relay = ui_tx.clone();
+                let pty_cmd_tx_clone = pty_cmd_tx_for_relay.clone();
+                let relay_forward_handle = tokio::task::spawn_blocking(move || {
+                    forward_relay_events(relay_event_rx, ui_tx_relay, ipc_cmd_tx_for_relay, pty_cmd_tx_clone);
+                });
+
+                // Wait for shutdown
+                loop {
+                    match bg_rx.try_recv() {
+                        Ok(BackgroundCommand::Shutdown) => break,
+                        Ok(_) => {}
+                        Err(mpsc::TryRecvError::Disconnected) => break,
+                        Err(mpsc::TryRecvError::Empty) => {}
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+
+                relay_handle.abort();
+                ipc_handle.abort();
+                relay_forward_handle.abort();
+                pty_forward_handle.abort();
+                pty_event_handle.abort();
+                return;
             }
         };
 
@@ -480,7 +579,7 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         // Spawn event forwarding tasks
         let ui_tx_relay = ui_tx.clone();
         let relay_forward_handle = tokio::task::spawn_blocking(move || {
-            forward_relay_events(relay_event_rx, ui_tx_relay, ipc_cmd_tx_for_relay);
+            forward_relay_events(relay_event_rx, ui_tx_relay, ipc_cmd_tx_for_relay, pty_cmd_tx_for_relay);
         });
 
         let ui_tx_ipc = ui_tx.clone();
@@ -519,6 +618,8 @@ fn run_background_tasks(ui_tx: mpsc::Sender<UiEvent>, bg_rx: mpsc::Receiver<Back
         ipc_handle.abort();
         relay_forward_handle.abort();
         ipc_forward_handle.abort();
+        pty_forward_handle.abort();
+        pty_event_handle.abort();
 
         info!("Background tasks shut down");
     });
@@ -535,8 +636,9 @@ async fn run_relay_only(
     let (relay_event_tx, relay_event_rx) = mpsc::channel::<RelayEvent>();
     let (relay_cmd_tx, relay_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<RelayCommand>();
 
-    // Create a dummy IPC command sender (unused in relay-only mode)
+    // Create dummy command senders (unused in relay-only mode)
     let (dummy_ipc_tx, _dummy_ipc_rx) = tokio::sync::mpsc::unbounded_channel::<IpcCommand>();
+    let (dummy_pty_tx, _dummy_pty_rx) = tokio::sync::mpsc::unbounded_channel::<PtyCommand>();
 
     // Create a new relay with the fresh channel
     let relay_url = std::env::var("RELAY_URL")
@@ -549,7 +651,7 @@ async fn run_relay_only(
 
     let ui_tx_relay = ui_tx.clone();
     let relay_forward_handle = tokio::task::spawn_blocking(move || {
-        forward_relay_events(relay_event_rx, ui_tx_relay, dummy_ipc_tx);
+        forward_relay_events(relay_event_rx, ui_tx_relay, dummy_ipc_tx, dummy_pty_tx);
     });
 
     // Wait for shutdown
@@ -577,11 +679,12 @@ async fn run_relay_only(
 ///
 /// This runs in a spawn_blocking task because std::sync::mpsc::recv() is blocking.
 /// Converts RelayEvent from the relay module into UiEvent for the main thread.
-/// Also forwards terminal data from relay to IPC (browser -> shell).
+/// Also forwards terminal data from relay to IPC and PTY (browser -> shell).
 fn forward_relay_events(
     rx: mpsc::Receiver<RelayEvent>,
     ui_tx: mpsc::Sender<UiEvent>,
     ipc_cmd_tx: tokio::sync::mpsc::UnboundedSender<IpcCommand>,
+    pty_cmd_tx: tokio::sync::mpsc::UnboundedSender<PtyCommand>,
 ) {
     debug!("Relay event forwarder starting");
     loop {
@@ -595,8 +698,13 @@ fn forward_relay_events(
                     RelayEvent::BrowserDisconnected(id) => UiEvent::BrowserDisconnected(id),
                     RelayEvent::Error(msg) => UiEvent::RelayError(msg),
                     RelayEvent::TerminalData { session_id, data } => {
-                        // Forward to IPC for shell
+                        // Forward to IPC for shell integration sessions
                         let _ = ipc_cmd_tx.send(IpcCommand::WriteToSession {
+                            session_id: session_id.clone(),
+                            data: data.clone(),
+                        });
+                        // Forward to PTY for PTY sessions
+                        let _ = pty_cmd_tx.send(PtyCommand::Write {
                             session_id: session_id.clone(),
                             data: data.clone(),
                         });

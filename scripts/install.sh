@@ -220,6 +220,10 @@ fi
 launchctl unload "$RELAY_PLIST" 2>/dev/null || true
 launchctl unload "$APP_PLIST" 2>/dev/null || true
 
+# Build PATH that includes Homebrew so services can find cloudflared/tmux
+BREW_PREFIX="$(brew --prefix)"
+LAUNCH_PATH="${BREW_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 # relay-server daemon
 cat > "$RELAY_PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -232,6 +236,11 @@ cat > "$RELAY_PLIST" << EOF
     <array>
         <string>${INSTALL_DIR}/bin/relay-server</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${LAUNCH_PATH}</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -261,6 +270,11 @@ cat > "$APP_PLIST" << EOF
     <array>
         <string>${APP_DIR}/Terminal Remote.app/Contents/MacOS/mac-client</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${LAUNCH_PATH}</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

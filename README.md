@@ -4,89 +4,40 @@ Access your Mac's iTerm2 terminal sessions from any browser, anywhere.
 
 Your Mac connects to a relay server, and you can connect from your iPad, laptop, or phone to see and interact with all your open iTerm2 tabs as if you were sitting at your desk.
 
-## Quick Start
-
-### Automated Setup (Recommended)
+## Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/studium-ignotum/iterm2-remote.git
-cd iterm2-remote
-
-# Run setup script
-./scripts/setup.sh
-
-# Start all services
-./scripts/start.sh
+curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/install.sh | bash
 ```
 
-The setup script will:
-- Check and install prerequisites
-- Configure iTerm2 Python API
-- Create Python virtual environment
-- Install all dependencies
-- Optionally set up Cloudflare Tunnel for remote access
+That's it. Services start immediately and auto-start on login.
 
-**For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md).**
+To install a specific version:
+
+```bash
+VERSION=v2.1.0 curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/install.sh | bash
+```
+
+### What it does
+
+- Installs Homebrew dependencies (`cloudflared`, `tmux`)
+- Downloads the latest release for your architecture (Apple Silicon or Intel)
+- Installs the menu bar app and relay server
+- Configures shell integration (zsh, bash, or fish)
+- Creates LaunchAgents so services auto-start on login and restart on crash
 
 ### Prerequisites
 
-- **macOS** with iTerm2 installed
-- **Node.js** 24.x or later
-- **pnpm** package manager
-- **Python** 3.7+ (for iTerm2 bridge)
-- **iTerm2 Python API enabled** (see [iTerm2 Configuration](#iterm2-configuration))
+- **macOS** (Apple Silicon or Intel)
+- **Homebrew** (for installing cloudflared and tmux)
 
-### Manual Installation
+## Uninstall
 
 ```bash
-# Clone the repository
-git clone https://github.com/studium-ignotum/iterm2-remote.git
-cd iterm2-remote
-
-# Install all dependencies
-cd relay-server && pnpm install && cd ..
-cd ui && pnpm install && cd ..
-cd mac-client && pnpm install && cd ..
-
-# Set up Python environment for Mac client
-cd mac-client
-python3 -m venv .venv
-source .venv/bin/activate
-pip install iterm2
-deactivate
-cd ..
+curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/uninstall.sh | bash
 ```
 
-### Running Locally
-
-Open three terminal windows:
-
-**Terminal 1 - Start the Relay Server:**
-```bash
-cd relay-server
-pnpm start
-# Output: [Relay] Server listening on port 8080
-```
-
-**Terminal 2 - Start the Web UI:**
-```bash
-cd ui
-pnpm run dev
-# Opens at http://localhost:5173
-```
-
-**Terminal 3 - Start the Mac Client:**
-```bash
-cd mac-client
-pnpm run dev
-# Displays a 6-character session code
-```
-
-**Connect from Browser:**
-1. Open http://localhost:5173
-2. Enter the session code from the Mac client
-3. Your iTerm2 terminals appear in the browser
+Removes the app, binaries, LaunchAgents, shell integration, and IPC socket.
 
 ## Architecture
 

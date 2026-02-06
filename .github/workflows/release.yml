@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+            os: macos-14
+          - target: x86_64-apple-darwin
+            arch: x86_64
+            os: macos-13
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build web UI
+        working-directory: relay-server/web-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build relay-server
+        run: |
+          cargo build --release --manifest-path relay-server/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Build mac-client
+        run: |
+          cargo build --release --manifest-path mac-client/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Create .app bundle
+        run: |
+          BINARY_PATH="mac-client/target/${{ matrix.target }}/release/mac-client"
+          APP_NAME="Terminal Remote.app"
+          mkdir -p "$APP_NAME/Contents/MacOS"
+          mkdir -p "$APP_NAME/Contents/Resources"
+          cp "$BINARY_PATH" "$APP_NAME/Contents/MacOS/"
+          cp mac-client/Info.plist "$APP_NAME/Contents/"
+          if [ -f mac-client/resources/AppIcon.icns ]; then
+            cp mac-client/resources/AppIcon.icns "$APP_NAME/Contents/Resources/"
+          fi
+
+      - name: Package release archive
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE="terminal-remote-${VERSION}-darwin-${{ matrix.arch }}.tar.gz"
+
+          # Use staging directory for reliable archive structure
+          STAGING="terminal-remote-staging"
+          mkdir -p "$STAGING/shell-integration"
+
+          # Copy .app bundle
+          cp -R "Terminal Remote.app" "$STAGING/"
+
+          # Copy relay-server binary
+          cp "relay-server/target/${{ matrix.target }}/release/relay-server" "$STAGING/relay-server"
+
+          # Copy shell integration scripts
+          cp shell-integration/init.zsh "$STAGING/shell-integration/"
+          cp shell-integration/init.bash "$STAGING/shell-integration/"
+          cp shell-integration/init.fish "$STAGING/shell-integration/"
+
+          # Create archive from staging directory
+          cd "$STAGING" && tar -czf "../$ARCHIVE" . && cd ..
+
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/release-arm64/*.tar.gz
+            artifacts/release-x86_64/*.tar.gz

@@ -6,8 +6,7 @@
  * by the parent via CSS, so the xterm buffer is never cleared on tab switch.
  *
  * Terminal dimensions come from the mac (via session_resize messages).
- * On mobile/small screens, the terminal is CSS-scaled to fit the container
- * rather than sending resize back to the mac.
+ * On mobile (<768px), mac size is ignored and FitAddon fits to screen.
  */
 
 import { useRef, useEffect } from 'react';
@@ -36,8 +35,7 @@ export default function Terminal({
   const webglAddonRef = useRef<import('@xterm/addon-webgl').WebglAddon | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const fitReadyRef = useRef(false);
-  /** Mac's terminal dimensions (source of truth). Null until first session_resize. */
+  /** Mac's terminal dimensions (source of truth on desktop). Null until first session_resize. */
   const macSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const { registerTerminal, unregisterTerminal, markTerminalReady, onSessionResize } = useTerminal();
@@ -65,45 +63,35 @@ export default function Terminal({
     const binaryDisposable = term.onBinary((data) => onBinaryInputRef.current?.(data));
 
     /**
-     * Apply CSS transform to scale the terminal to fit the container.
-     * Called when the mac sends a resize or the container changes size.
+     * Fit terminal to container.
+     * Mobile (<768px): always use FitAddon (ignore mac size, fit to screen).
+     * Desktop: use mac's exact cols/rows if known, otherwise FitAddon.
      */
-    const applyScale = () => {
-      const xtermEl = container.querySelector('.xterm') as HTMLElement | null;
-      if (!xtermEl) return;
+    const fitTerminal = () => {
+      if (!fitAddonRef.current) return;
+      if (container.clientWidth <= 0 || container.clientHeight <= 0) return;
 
-      const cw = container.clientWidth;
-      const ch = container.clientHeight;
-      const tw = xtermEl.scrollWidth;
-      const th = xtermEl.scrollHeight;
+      if (window.innerWidth < 768) {
+        // Mobile: fit to screen, ignore mac dimensions
+        fitAddonRef.current.fit();
+        return;
+      }
 
-      if (tw <= 0 || th <= 0 || cw <= 0 || ch <= 0) return;
-
-      if (tw <= cw && th <= ch) {
-        // Terminal fits — no scaling needed
-        xtermEl.style.transform = '';
-        xtermEl.style.transformOrigin = '';
-        container.style.overflow = '';
+      if (macSizeRef.current) {
+        const { cols, rows } = macSizeRef.current;
+        term.resize(cols, rows);
       } else {
-        // Terminal larger than container — scale to fit
-        const scale = Math.min(cw / tw, ch / th);
-        xtermEl.style.transformOrigin = 'top left';
-        xtermEl.style.transform = `scale(${scale})`;
-        container.style.overflow = 'hidden';
+        fitAddonRef.current.fit();
       }
     };
 
     /**
-     * Handle resize from mac: set xterm to mac's exact dimensions,
-     * then apply CSS scaling to fit container.
+     * Handle resize from mac: store dimensions and fit.
      */
     const handleMacResize = (cols: number, rows: number) => {
+      if (cols < TERMINAL_MIN_COLS || rows < TERMINAL_MIN_ROWS) return;
       macSizeRef.current = { cols, rows };
-      if (cols >= TERMINAL_MIN_COLS && rows >= TERMINAL_MIN_ROWS) {
-        term.resize(cols, rows);
-        // Allow xterm to render at new size, then scale
-        requestAnimationFrame(applyScale);
-      }
+      fitTerminal();
     };
 
     // Subscribe to mac resize events for this session
@@ -126,13 +114,12 @@ export default function Terminal({
         console.warn('[Terminal] WebGL not available, using DOM renderer');
       }
 
-      // FitAddon — used as fallback when no mac size is known yet
+      // FitAddon
       try {
         const { FitAddon } = await import('@xterm/addon-fit');
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         fitAddonRef.current = fitAddon;
-        fitReadyRef.current = true;
       } catch (e) {
         console.error('[Terminal] Failed to load FitAddon:', e);
       }
@@ -170,47 +157,34 @@ export default function Terminal({
         console.warn('[Terminal] Unicode11Addon not available:', e);
       }
 
-      // Set up ResizeObserver — re-apply scaling when container changes
+      // Set up ResizeObserver — re-fit when container changes
       if (container) {
         resizeObserverRef.current = new ResizeObserver(() => {
           clearTimeout(resizeTimeoutRef.current);
           resizeTimeoutRef.current = setTimeout(() => {
             if (container.clientWidth > 0 && container.clientHeight > 0) {
-              if (macSizeRef.current) {
-                // Mac size known — re-apply scale
-                applyScale();
-              } else if (fitAddonRef.current) {
-                // No mac size yet — use FitAddon as fallback
-                fitAddonRef.current.fit();
-              }
+              fitTerminal();
             }
           }, 100);
         });
         resizeObserverRef.current.observe(container);
 
-        // Initial fit — use FitAddon until mac sends its size
-        const doInitialFit = (label: string) => {
-          const w = container.clientWidth;
-          const h = container.clientHeight;
-          if (fitAddonRef.current && w > 0 && h > 0 && !macSizeRef.current) {
-            fitAddonRef.current.fit();
+        // Initial fit (retry a few times to handle async layout)
+        const doInitialFit = () => {
+          if (fitAddonRef.current && container.clientWidth > 0 && container.clientHeight > 0) {
+            fitTerminal();
             term.refresh(0, term.rows - 1);
             markTerminalReady(sessionId);
             term.scrollToBottom();
             term.focus();
-          } else if (macSizeRef.current) {
-            markTerminalReady(sessionId);
-            applyScale();
-            term.scrollToBottom();
-            term.focus();
           }
         };
-        requestAnimationFrame(() => doInitialFit('raf'));
-        setTimeout(() => doInitialFit('50ms'), 50);
-        setTimeout(() => doInitialFit('150ms'), 150);
-        setTimeout(() => doInitialFit('300ms'), 300);
-        setTimeout(() => doInitialFit('600ms'), 600);
-        setTimeout(() => doInitialFit('1000ms'), 1000);
+        requestAnimationFrame(doInitialFit);
+        setTimeout(doInitialFit, 50);
+        setTimeout(doInitialFit, 150);
+        setTimeout(doInitialFit, 300);
+        setTimeout(doInitialFit, 600);
+        setTimeout(doInitialFit, 1000);
       }
     })();
 
@@ -244,37 +218,12 @@ export default function Terminal({
     if (options.cursorBlink !== undefined) term.options.cursorBlink = options.cursorBlink;
     if (options.scrollback !== undefined) term.options.scrollback = options.scrollback;
 
-    // Force terminal to refresh with new options (if terminal has rows)
     if (term.rows > 0) {
       term.refresh(0, term.rows - 1);
     }
 
-    // Re-fit after option changes (font size may change dimensions)
     requestAnimationFrame(() => {
-      if (macSizeRef.current) {
-        const container = containerRef.current;
-        if (container) {
-          const xtermEl = container.querySelector('.xterm') as HTMLElement | null;
-          if (xtermEl) {
-            // Reset scale before measuring
-            xtermEl.style.transform = '';
-            requestAnimationFrame(() => {
-              const cw = container.clientWidth;
-              const ch = container.clientHeight;
-              const tw = xtermEl.scrollWidth;
-              const th = xtermEl.scrollHeight;
-              if (tw > cw || th > ch) {
-                const scale = Math.min(cw / tw, ch / th);
-                xtermEl.style.transformOrigin = 'top left';
-                xtermEl.style.transform = `scale(${scale})`;
-                container.style.overflow = 'hidden';
-              }
-            });
-          }
-        }
-      } else {
-        fitAddonRef.current?.fit();
-      }
+      fitAddonRef.current?.fit();
     });
   }, [options]);
 

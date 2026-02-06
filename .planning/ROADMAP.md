@@ -119,6 +119,7 @@ Plans:
 **Goal**: Any shell session can connect to mac-client for remote access
 **Depends on**: Phase 5
 **Requirements**: SHELL-01, SHELL-02, SHELL-03, SHELL-04, SHELL-05, SHELL-06, SHELL-07, SHELL-08, SHELL-09
+**Plans:** 2 plans in 2 waves
 **Success Criteria** (what must be TRUE):
   1. Adding `source ~/.terminal-remote/init.zsh` to .zshrc enables integration
   2. Shell sessions appear as named sessions in mac-client
@@ -127,7 +128,8 @@ Plans:
   5. Shell exit cleanly removes session from mac-client
 
 Plans:
-- [ ] 06-01-PLAN.md -- TBD
+- [ ] 06-01-PLAN.md -- Shell integration scripts for zsh, bash, fish (Wave 1)
+- [ ] 06-02-PLAN.md -- Installation and verification (Wave 2)
 
 ### Phase 7: Web UI & Full Pipeline (v2.0)
 **Goal**: Browser users can view and interact with any connected terminal
@@ -155,9 +157,9 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 3. Performance & Reliability | - | Deferred | - |
 | 4. Relay Server | 4/4 | Complete | 2026-02-06 |
 | 5. Mac Client | 6/6 | Complete | 2026-02-06 |
-| 6. Shell Integration | 0/? | Ready | - |
+| 6. Shell Integration | 0/2 | Planned | - |
 | 7. Web UI & Full Pipeline | 0/? | Blocked by Phase 6 | - |
 
 ---
 *Created: 2026-02-04*
-*Last updated: 2026-02-06 (Phase 5 complete - Mac Client with winit event loop)*
+*Last updated: 2026-02-06 (Phase 6 planned - Shell Integration)*

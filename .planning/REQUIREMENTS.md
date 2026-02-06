@@ -17,31 +17,31 @@ Requirements for v2.0 Rust rewrite with universal terminal support.
 
 ### Mac Client (Rust Menu Bar)
 
-- [ ] **CLIENT-01**: Rust binary runs as menu bar app (no Dock icon)
-- [ ] **CLIENT-02**: WebSocket connection to cloud relay with auto-reconnect
-- [ ] **CLIENT-03**: Unix socket listener for shell integration IPC
-- [ ] **CLIENT-04**: Session management (track connected shells)
-- [ ] **CLIENT-05**: Status icon visible in menu bar
-- [ ] **CLIENT-06**: Click icon opens dropdown menu
-- [ ] **CLIENT-07**: Session code displayed in menu
-- [ ] **CLIENT-08**: Copy session code to clipboard action
-- [ ] **CLIENT-09**: Connection status indicator (relay connected/disconnected)
-- [ ] **CLIENT-10**: Quit option in menu
-- [ ] **CLIENT-11**: Start at login option (Login Items)
-- [ ] **CLIENT-12**: Template image for menu bar icon (auto dark/light)
-- [ ] **CLIENT-13**: Session count displayed in menu
+- [x] **CLIENT-01**: Rust binary runs as menu bar app (no Dock icon)
+- [x] **CLIENT-02**: WebSocket connection to cloud relay with auto-reconnect
+- [x] **CLIENT-03**: Unix socket listener for shell integration IPC
+- [x] **CLIENT-04**: Session management (track connected shells)
+- [x] **CLIENT-05**: Status icon visible in menu bar
+- [x] **CLIENT-06**: Click icon opens dropdown menu
+- [x] **CLIENT-07**: Session code displayed in menu
+- [x] **CLIENT-08**: Copy session code to clipboard action
+- [x] **CLIENT-09**: Connection status indicator (relay connected/disconnected)
+- [x] **CLIENT-10**: Quit option in menu
+- [x] **CLIENT-11**: Start at login option (Login Items)
+- [x] **CLIENT-12**: Template image for menu bar icon (auto dark/light)
+- [x] **CLIENT-13**: Session count displayed in menu
 
 ### Shell Integration
 
-- [ ] **SHELL-01**: Auto-connect to mac-client when shell starts
-- [ ] **SHELL-02**: Zsh integration script works (`source ~/.terminal-remote/init.zsh`)
-- [ ] **SHELL-03**: Bash integration script works (`source ~/.terminal-remote/init.bash`)
-- [ ] **SHELL-04**: Silent no-op when mac-client not running (no errors or delays)
-- [ ] **SHELL-05**: No prompt interference (works with starship, p10k, custom prompts)
-- [ ] **SHELL-06**: No perceptible command delay (<10ms added latency)
-- [ ] **SHELL-07**: Works in any terminal app (iTerm2, VS Code, Zed, Terminal.app, etc.)
-- [ ] **SHELL-08**: Session named from working directory or terminal app
-- [ ] **SHELL-09**: Graceful disconnect on shell exit (session removed from mac-client)
+- [x] **SHELL-01**: Auto-connect to mac-client when shell starts
+- [x] **SHELL-02**: Zsh integration script works (`source ~/.terminal-remote/init.zsh`)
+- [x] **SHELL-03**: Bash integration script works (`source ~/.terminal-remote/init.bash`)
+- [x] **SHELL-04**: Silent no-op when mac-client not running (no errors or delays)
+- [x] **SHELL-05**: No prompt interference (works with starship, p10k, custom prompts)
+- [x] **SHELL-06**: No perceptible command delay (<10ms added latency)
+- [x] **SHELL-07**: Works in any terminal app (iTerm2, VS Code, Zed, Terminal.app, etc.)
+- [x] **SHELL-08**: Session named from working directory or terminal app
+- [x] **SHELL-09**: Graceful disconnect on shell exit (session removed from mac-client)
 
 ### Web UI (Embedded)
 
@@ -107,28 +107,28 @@ Deferred to post-v2.0 release.
 | RELAY-03 | Phase 4 | Complete |
 | RELAY-04 | Phase 4 | Complete |
 | RELAY-05 | Phase 4 | Complete |
-| CLIENT-01 | Phase 5 | Pending |
-| CLIENT-02 | Phase 5 | Pending |
-| CLIENT-03 | Phase 5 | Pending |
-| CLIENT-04 | Phase 5 | Pending |
-| CLIENT-05 | Phase 5 | Pending |
-| CLIENT-06 | Phase 5 | Pending |
-| CLIENT-07 | Phase 5 | Pending |
-| CLIENT-08 | Phase 5 | Pending |
-| CLIENT-09 | Phase 5 | Pending |
-| CLIENT-10 | Phase 5 | Pending |
-| CLIENT-11 | Phase 5 | Pending |
-| CLIENT-12 | Phase 5 | Pending |
-| CLIENT-13 | Phase 5 | Pending |
-| SHELL-01 | Phase 6 | Pending |
-| SHELL-02 | Phase 6 | Pending |
-| SHELL-03 | Phase 6 | Pending |
-| SHELL-04 | Phase 6 | Pending |
-| SHELL-05 | Phase 6 | Pending |
-| SHELL-06 | Phase 6 | Pending |
-| SHELL-07 | Phase 6 | Pending |
-| SHELL-08 | Phase 6 | Pending |
-| SHELL-09 | Phase 6 | Pending |
+| CLIENT-01 | Phase 5 | Complete |
+| CLIENT-02 | Phase 5 | Complete |
+| CLIENT-03 | Phase 5 | Complete |
+| CLIENT-04 | Phase 5 | Complete |
+| CLIENT-05 | Phase 5 | Complete |
+| CLIENT-06 | Phase 5 | Complete |
+| CLIENT-07 | Phase 5 | Complete |
+| CLIENT-08 | Phase 5 | Complete |
+| CLIENT-09 | Phase 5 | Complete |
+| CLIENT-10 | Phase 5 | Complete |
+| CLIENT-11 | Phase 5 | Complete |
+| CLIENT-12 | Phase 5 | Complete |
+| CLIENT-13 | Phase 5 | Complete |
+| SHELL-01 | Phase 6 | Complete |
+| SHELL-02 | Phase 6 | Complete |
+| SHELL-03 | Phase 6 | Complete |
+| SHELL-04 | Phase 6 | Complete |
+| SHELL-05 | Phase 6 | Complete |
+| SHELL-06 | Phase 6 | Complete |
+| SHELL-07 | Phase 6 | Complete |
+| SHELL-08 | Phase 6 | Complete |
+| SHELL-09 | Phase 6 | Complete |
 | WEB-01 | Phase 7 | Pending |
 | WEB-02 | Phase 7 | Pending |
 | WEB-03 | Phase 7 | Pending |
@@ -146,4 +146,4 @@ Deferred to post-v2.0 release.
 
 ---
 *Requirements defined: 2026-02-06*
-*Last updated: 2026-02-06 after Phase 4 completion*
+*Last updated: 2026-02-06 after Phase 6 completion*

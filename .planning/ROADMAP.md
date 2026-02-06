@@ -20,7 +20,7 @@ This roadmap covers two milestones. Milestone v1.0 (Phases 1-3) delivered the in
 
 - [x] **Phase 4: Relay Server** - Rust WebSocket server with embedded web UI
 - [x] **Phase 5: Mac Client** - Menu bar app coordinating local sessions with relay
-- [ ] **Phase 6: Shell Integration** - Universal terminal support via PTY interposition
+- [x] **Phase 6: Shell Integration** - Universal terminal support via shell scripts
 - [ ] **Phase 7: Web UI & Full Pipeline** - Browser terminal interface with multi-session support
 
 ## Phase Details
@@ -116,6 +116,7 @@ Plans:
 - [x] 05-06-PLAN.md -- Bidirectional terminal data forwarding (Wave 4)
 
 ### Phase 6: Shell Integration (v2.0)
+**Status:** Complete
 **Goal**: Any shell session can connect to mac-client for remote access
 **Depends on**: Phase 5
 **Requirements**: SHELL-01, SHELL-02, SHELL-03, SHELL-04, SHELL-05, SHELL-06, SHELL-07, SHELL-08, SHELL-09
@@ -128,8 +129,8 @@ Plans:
   5. Shell exit cleanly removes session from mac-client
 
 Plans:
-- [ ] 06-01-PLAN.md -- Shell integration scripts for zsh, bash, fish (Wave 1)
-- [ ] 06-02-PLAN.md -- Installation and verification (Wave 2)
+- [x] 06-01-PLAN.md -- Shell integration scripts for zsh, bash, fish (Wave 1)
+- [x] 06-02-PLAN.md -- Installation and verification (Wave 2)
 
 ### Phase 7: Web UI & Full Pipeline (v2.0)
 **Goal**: Browser users can view and interact with any connected terminal
@@ -157,9 +158,9 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 3. Performance & Reliability | - | Deferred | - |
 | 4. Relay Server | 4/4 | Complete | 2026-02-06 |
 | 5. Mac Client | 6/6 | Complete | 2026-02-06 |
-| 6. Shell Integration | 0/2 | Planned | - |
-| 7. Web UI & Full Pipeline | 0/? | Blocked by Phase 6 | - |
+| 6. Shell Integration | 2/2 | Complete | 2026-02-06 |
+| 7. Web UI & Full Pipeline | 0/? | Ready to plan | - |
 
 ---
 *Created: 2026-02-04*
-*Last updated: 2026-02-06 (Phase 6 planned - Shell Integration)*
+*Last updated: 2026-02-06 (Phase 6 complete - Shell Integration)*

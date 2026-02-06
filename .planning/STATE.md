@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-06)
 
 ## Current Position
 
-Phase: 6 - Shell Integration (2/3 plans complete)
-Plan: 02 complete
-Status: In progress
-Last activity: 2026-02-06 -- Completed 06-02-PLAN.md (Installation and Verification)
+Phase: 6 - Shell Integration (2/2 plans complete)
+Plan: Phase complete
+Status: Phase complete
+Last activity: 2026-02-06 -- Completed Phase 6 (Shell Integration)
 
-Progress: [######----] 66% (phase 6)
+Progress: [##########] 100% (phase 6)
 
 ## v2.0 Overview
 
@@ -24,8 +24,8 @@ Four phases delivering a complete Rust rewrite with universal terminal support:
 |-------|------|--------------|--------|
 | 4 | Relay Server | 5 (RELAY) | COMPLETE (4/4 plans) |
 | 5 | Mac Client | 13 (CLIENT) | COMPLETE (6/6 plans) |
-| 6 | Shell Integration | 9 (SHELL) | IN PROGRESS (1/3 plans) |
-| 7 | Web UI & Full Pipeline | 9 (WEB) | Blocked by Phase 6 |
+| 6 | Shell Integration | 9 (SHELL) | COMPLETE (2/2 plans) |
+| 7 | Web UI & Full Pipeline | 9 (WEB) | Ready to plan |
 
 ## v1.0 Summary (Node.js/SvelteKit)
 
@@ -125,6 +125,6 @@ None -- Shell integration installed and verified working with mac-client.
 
 ## Session Continuity
 
-Last session: 2026-02-06T05:35:00Z
-Stopped at: Completed 06-02-PLAN.md (Installation and Verification)
-Resume file: .planning/phases/06-shell-integration/06-03-PLAN.md
+Last session: 2026-02-06T05:45:00Z
+Stopped at: Completed Phase 6 (Shell Integration)
+Resume file: .planning/phases/07-web-ui/ (to be created)

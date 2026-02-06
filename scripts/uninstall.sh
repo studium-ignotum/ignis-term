@@ -23,8 +23,12 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.terminal-remote"
 APP_DIR="$HOME/Applications"
 APP_NAME="Terminal Remote.app"
-LAUNCHAGENT_LABEL="com.terminal-remote.launcher"
-LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/${LAUNCHAGENT_LABEL}.plist"
+RELAY_LABEL="com.terminal-remote.relay"
+APP_LABEL="com.terminal-remote.app"
+RELAY_PLIST="$HOME/Library/LaunchAgents/${RELAY_LABEL}.plist"
+APP_PLIST="$HOME/Library/LaunchAgents/${APP_LABEL}.plist"
+# Legacy label from v2.0 installer
+LEGACY_PLIST="$HOME/Library/LaunchAgents/com.terminal-remote.launcher.plist"
 
 echo -e "${BLUE}"
 echo "========================================"
@@ -58,15 +62,16 @@ pkill -f "mac-client" 2>/dev/null || true
 sleep 0.3
 echo -e "${GREEN}  Processes stopped${NC}"
 
-# ── Remove LaunchAgent ────────────────────────────────────────
-echo -e "${BLUE}> Removing login item...${NC}"
-if [ -f "$LAUNCHAGENT_PLIST" ]; then
-    launchctl unload "$LAUNCHAGENT_PLIST" 2>/dev/null || true
-    rm -f "$LAUNCHAGENT_PLIST"
-    echo -e "${GREEN}  Removed LaunchAgent${NC}"
-else
-    echo "  No LaunchAgent found (skipped)"
-fi
+# ── Remove LaunchAgents ───────────────────────────────────────
+echo -e "${BLUE}> Removing LaunchAgents...${NC}"
+for PLIST in "$RELAY_PLIST" "$APP_PLIST" "$LEGACY_PLIST"; do
+    if [ -f "$PLIST" ]; then
+        launchctl unload "$PLIST" 2>/dev/null || true
+        rm -f "$PLIST"
+        echo -e "${GREEN}  Removed $(basename "$PLIST")${NC}"
+    fi
+done
+echo -e "${GREEN}  LaunchAgents removed${NC}"
 
 # ── Remove .app bundle ────────────────────────────────────────
 echo -e "${BLUE}> Removing app bundle...${NC}"
@@ -146,7 +151,7 @@ echo "  Removed:"
 echo "    - App bundle ($APP_DIR/$APP_NAME)"
 echo "    - Install directory ($INSTALL_DIR/)"
 echo "    - Shell integration source lines"
-echo "    - LaunchAgent (login item)"
+echo "    - LaunchAgents (relay-server + mac-client)"
 echo "    - IPC socket"
 echo ""
 echo "  Restart your shell or open a new terminal to"

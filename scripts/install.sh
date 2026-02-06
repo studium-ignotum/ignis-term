@@ -29,8 +29,10 @@ VERSION="${VERSION:-latest}"
 INSTALL_DIR="$HOME/.terminal-remote"
 APP_DIR="$HOME/Applications"
 APP_NAME="Terminal Remote.app"
-LAUNCHAGENT_LABEL="com.terminal-remote.launcher"
-LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/${LAUNCHAGENT_LABEL}.plist"
+RELAY_LABEL="com.terminal-remote.relay"
+APP_LABEL="com.terminal-remote.app"
+RELAY_PLIST="$HOME/Library/LaunchAgents/${RELAY_LABEL}.plist"
+APP_PLIST="$HOME/Library/LaunchAgents/${APP_LABEL}.plist"
 
 # ── Temp directory with cleanup trap ───────────────────────────
 TMPDIR=""
@@ -198,71 +200,88 @@ if [ -n "$RC_FILE" ]; then
     fi
 fi
 
-# ── Create launcher script ────────────────────────────────────
+# ── Create LaunchAgents ───────────────────────────────────────
 echo ""
-echo -e "${BLUE}> Creating launcher...${NC}"
+echo -e "${BLUE}> Setting up LaunchAgents...${NC}"
 
-cat > "$INSTALL_DIR/bin/terminal-remote-start" << 'LAUNCHER'
-#!/bin/bash
-# Terminal Remote launcher
-INSTALL_DIR="$HOME/.terminal-remote"
-APP_DIR="$HOME/Applications"
+mkdir -p "$HOME/Library/LaunchAgents"
 
-# Start relay-server if not already running
-if ! pgrep -f "terminal-remote.*relay-server" > /dev/null 2>&1; then
-    "$INSTALL_DIR/bin/relay-server" &
-    sleep 0.5
+# Remove legacy v2.0 LaunchAgent if present
+LEGACY_PLIST="$HOME/Library/LaunchAgents/com.terminal-remote.launcher.plist"
+if [ -f "$LEGACY_PLIST" ]; then
+    launchctl unload "$LEGACY_PLIST" 2>/dev/null || true
+    rm -f "$LEGACY_PLIST"
+    # Also remove the old launcher script
+    rm -f "$INSTALL_DIR/bin/terminal-remote-start"
+    echo -e "${GREEN}  Cleaned up legacy LaunchAgent${NC}"
 fi
 
-# Open the app (idempotent -- won't duplicate if already running)
-open "$APP_DIR/Terminal Remote.app"
-LAUNCHER
+# Unload current agents if already installed (for clean reinstall)
+launchctl unload "$RELAY_PLIST" 2>/dev/null || true
+launchctl unload "$APP_PLIST" 2>/dev/null || true
 
-chmod +x "$INSTALL_DIR/bin/terminal-remote-start"
-echo -e "${GREEN}  Launcher created at $INSTALL_DIR/bin/terminal-remote-start${NC}"
-
-# ── Login prompt ──────────────────────────────────────────────
-echo ""
-
-if [ -t 0 ]; then
-    echo -en "${BLUE}Start Terminal Remote at login? (y/n) ${NC}"
-    read -r LOGIN_CHOICE
-else
-    LOGIN_CHOICE="n"
-fi
-
-if [ "$LOGIN_CHOICE" = "y" ] || [ "$LOGIN_CHOICE" = "Y" ]; then
-    mkdir -p "$HOME/Library/LaunchAgents"
-
-    cat > "$LAUNCHAGENT_PLIST" << EOF
+# relay-server daemon
+cat > "$RELAY_PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${LAUNCHAGENT_LABEL}</string>
+    <string>${RELAY_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${INSTALL_DIR}/bin/terminal-remote-start</string>
+        <string>${INSTALL_DIR}/bin/relay-server</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>StandardOutPath</key>
-    <string>${INSTALL_DIR}/launcher.log</string>
+    <string>${INSTALL_DIR}/relay-server.log</string>
     <key>StandardErrorPath</key>
-    <string>${INSTALL_DIR}/launcher.log</string>
+    <string>${INSTALL_DIR}/relay-server.log</string>
 </dict>
 </plist>
 EOF
 
-    launchctl load "$LAUNCHAGENT_PLIST" 2>/dev/null || true
-    echo -e "${GREEN}  Terminal Remote will start at login${NC}"
-else
-    echo -e "  Skipped. Start manually with:"
-    echo "    $INSTALL_DIR/bin/terminal-remote-start"
-fi
+echo -e "${GREEN}  Created $RELAY_PLIST${NC}"
+
+# mac-client menu bar app
+cat > "$APP_PLIST" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${APP_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${APP_DIR}/Terminal Remote.app/Contents/MacOS/mac-client</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${INSTALL_DIR}/mac-client.log</string>
+    <key>StandardErrorPath</key>
+    <string>${INSTALL_DIR}/mac-client.log</string>
+</dict>
+</plist>
+EOF
+
+echo -e "${GREEN}  Created $APP_PLIST${NC}"
+
+# Start both services immediately
+launchctl load "$RELAY_PLIST"
+launchctl load "$APP_PLIST"
+echo -e "${GREEN}  Services started${NC}"
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""
@@ -274,12 +293,9 @@ echo "  Installed:"
 echo "    App:          $APP_DIR/$APP_NAME"
 echo "    Relay:        $INSTALL_DIR/bin/relay-server"
 echo "    Shell config: $INSTALL_DIR/init.$SHELL_EXT"
-echo "    Launcher:     $INSTALL_DIR/bin/terminal-remote-start"
 echo ""
-echo "  Start now:"
-echo -e "    ${BLUE}$INSTALL_DIR/bin/terminal-remote-start${NC}"
-echo ""
-echo "  Or restart your shell to activate shell integration,"
+echo "  Services are running and will auto-start on login."
+echo "  Restart your shell to activate shell integration,"
 echo "  then new terminal sessions will auto-register."
 echo ""
 echo "  Uninstall:"

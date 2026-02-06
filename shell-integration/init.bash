@@ -1,35 +1,51 @@
-# Terminal Remote - Bash Integration
-# Auto-wraps shell in tmux for remote access
+# Terminal Remote - Bash Integration (PTY Proxy)
 # Source this file in .bashrc: source ~/.terminal-remote/init.bash
+#
+# Wraps the shell in pty-proxy for transparent terminal capture.
+# Unlike tmux, this does NOT affect scroll, copy, mouse, or any
+# terminal behavior — the terminal emulator works 100% natively.
 
-# Skip if already in tmux
-[[ -n "$TMUX" ]] && return
+# Skip if already inside pty-proxy (prevent recursion)
+# PTY_PROXY_ACTIVE can leak to new Terminal windows via macOS env inheritance,
+# so verify by checking if our parent is actually pty-proxy.
+if [[ -n "$PTY_PROXY_ACTIVE" ]]; then
+  case "$(ps -o comm= -p $PPID 2>/dev/null)" in
+    login|*/login) unset PTY_PROXY_ACTIVE ;;  # New Terminal window — leaked env var
+    *) return ;;  # Inside pty-proxy or subshell — legitimate
+  esac
+fi
 
 # Skip if not interactive
 [[ $- != *i* ]] && return
 
-# Generate unique session name based on terminal
-_terminal_remote_session_name() {
-  local tty_name
-  tty_name=$(tty 2>/dev/null | sed 's|/dev/||' | tr '/' '-')
+# Skip if running inside tmux, screen, or other multiplexer
+[[ -n "$TMUX" || -n "$STY" ]] && return
 
-  # Use TTY + PID for uniqueness
-  echo "term-${tty_name:-$$}"
+# Skip if no TTY (e.g., scp, rsync, pipe)
+[[ ! -t 0 ]] && return
+
+_terminal_remote_find_proxy() {
+  local proxy
+  for proxy in \
+    "$HOME/.terminal-remote/bin/pty-proxy" \
+    "/usr/local/bin/pty-proxy" \
+    "/opt/homebrew/bin/pty-proxy"; do
+    [[ -x "$proxy" ]] && echo "$proxy" && return 0
+  done
+  return 1
 }
 
 _terminal_remote_init() {
-  local session_name
-  session_name=$(_terminal_remote_session_name)
+  local proxy
+  proxy=$(_terminal_remote_find_proxy) || return 0  # silently skip if not found
 
-  # Check if session already exists
-  if tmux has-session -t "$session_name" 2>/dev/null; then
-    # Attach to existing session
-    exec tmux attach-session -t "$session_name"
-  else
-    # Create new session with current directory
-    exec tmux new-session -s "$session_name"
-  fi
+  # Check if mac-client is running (socket exists)
+  [[ -S /tmp/terminal-remote.sock ]] || return 0  # silently skip
+
+  exec "$proxy"
 }
 
-# Run tmux wrapper
 _terminal_remote_init
+
+unset -f _terminal_remote_find_proxy 2>/dev/null
+unset -f _terminal_remote_init 2>/dev/null

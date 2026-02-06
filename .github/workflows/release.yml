@@ -55,6 +55,10 @@ jobs:
         run: |
           cargo build --release --manifest-path mac-client/Cargo.toml --target ${{ matrix.target }}
 
+      - name: Build pty-proxy
+        run: |
+          cargo build --release --manifest-path pty-proxy/Cargo.toml --target ${{ matrix.target }}
+
       - name: Create .app bundle
         run: |
           BINARY_PATH="mac-client/target/${{ matrix.target }}/release/mac-client"
@@ -81,6 +85,9 @@ jobs:
 
           # Copy relay-server binary
           cp "relay-server/target/${{ matrix.target }}/release/relay-server" "$STAGING/relay-server"
+
+          # Copy pty-proxy binary
+          cp "pty-proxy/target/${{ matrix.target }}/release/pty-proxy" "$STAGING/pty-proxy"
 
           # Copy shell integration scripts
           cp shell-integration/init.zsh "$STAGING/shell-integration/"

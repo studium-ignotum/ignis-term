@@ -1,39 +1,57 @@
-# Terminal Remote - Zsh Integration
-# Auto-wraps shell in tmux for remote access
+# Terminal Remote - Zsh Integration (PTY Proxy)
 # Source this file in .zshrc: source ~/.terminal-remote/init.zsh
+#
+# Wraps the shell in pty-proxy for transparent terminal capture.
+# Unlike tmux, this does NOT affect scroll, copy, mouse, or any
+# terminal behavior — the terminal emulator works 100% natively.
 
-# Skip if already in tmux
-[[ -n "$TMUX" ]] && return
+# Skip if already inside pty-proxy (prevent recursion)
+# PTY_PROXY_ACTIVE can leak to new Terminal windows via macOS env inheritance,
+# so verify by checking if our parent is actually pty-proxy.
+if [[ -n "$PTY_PROXY_ACTIVE" ]]; then
+  case "$(ps -o comm= -p $PPID 2>/dev/null)" in
+    login|*/login) unset PTY_PROXY_ACTIVE ;;  # New Terminal window — leaked env var
+    *) return ;;  # Inside pty-proxy or subshell — legitimate
+  esac
+fi
 
 # Skip if not interactive
 [[ ! -o interactive ]] && return
 
-# Generate unique session name based on terminal
-_terminal_remote_session_name() {
-  local tty_name="${TTY##*/}"
-  local window_id="${TERM_SESSION_ID:-$WINDOWID}"
+# Skip if running inside tmux, screen, or other multiplexer
+# (user explicitly chose to use tmux — don't interfere)
+[[ -n "$TMUX" || -n "$STY" ]] && return
 
-  # Use TTY + timestamp for uniqueness
-  if [[ -n "$window_id" ]]; then
-    echo "term-${tty_name}-${window_id##*:}"
-  else
-    echo "term-${tty_name}-$$"
-  fi
+# Skip if no TTY (e.g., scp, rsync, pipe)
+[[ ! -t 0 ]] && return
+
+# Find pty-proxy binary
+_terminal_remote_find_proxy() {
+  local proxy
+  for proxy in \
+    "$HOME/.terminal-remote/bin/pty-proxy" \
+    "/usr/local/bin/pty-proxy" \
+    "/opt/homebrew/bin/pty-proxy"; do
+    [[ -x "$proxy" ]] && echo "$proxy" && return 0
+  done
+  return 1
 }
 
 _terminal_remote_init() {
-  local session_name
-  session_name=$(_terminal_remote_session_name)
+  local proxy
+  proxy=$(_terminal_remote_find_proxy) || return 0  # silently skip if not found
 
-  # Check if session already exists
-  if tmux has-session -t "$session_name" 2>/dev/null; then
-    # Attach to existing session
-    exec tmux attach-session -t "$session_name"
-  else
-    # Create new session with current directory
-    exec tmux new-session -s "$session_name"
-  fi
+  # Check if mac-client is running (socket exists)
+  [[ -S /tmp/terminal-remote.sock ]] || return 0  # silently skip
+
+  # exec replaces this shell with pty-proxy, which then spawns a new shell.
+  # If pty-proxy fails for any reason, it falls back to exec'ing the shell
+  # directly — so the user always gets a working shell.
+  exec "$proxy"
 }
 
-# Run tmux wrapper
 _terminal_remote_init
+
+# Cleanup
+unfunction _terminal_remote_find_proxy 2>/dev/null
+unfunction _terminal_remote_init 2>/dev/null

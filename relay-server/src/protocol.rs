@@ -28,6 +28,7 @@ pub enum ControlMessage {
     SessionList { sessions: Vec<SessionInfo> },
     SessionConnected { session_id: String, name: String },
     SessionDisconnected { session_id: String },
+    SessionResize { session_id: String, cols: u16, rows: u16 },
 
     // Bidirectional
     Error { message: String },

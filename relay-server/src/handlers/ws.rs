@@ -137,9 +137,17 @@ async fn handle_mac_client(
                             tracing::info!(code = %code_clone, "Forwarding SessionList ({} sessions) to browsers", sessions.len());
                             state.broadcast_text_to_browsers(&code_clone, &text).await;
                         }
-                        ControlMessage::SessionConnected { .. }
-                        | ControlMessage::SessionDisconnected { .. } => {
-                            tracing::info!(code = %code_clone, "Forwarding session event to browsers");
+                        ControlMessage::SessionConnected { .. } => {
+                            tracing::info!(code = %code_clone, "Forwarding SessionConnected to browsers");
+                            state.broadcast_text_to_browsers(&code_clone, &text).await;
+                        }
+                        ControlMessage::SessionDisconnected { session_id } => {
+                            tracing::info!(code = %code_clone, session_id = %session_id, "Forwarding SessionDisconnected to browsers, purging scrollback");
+                            state.purge_session_scrollback(&code_clone, &session_id).await;
+                            state.broadcast_text_to_browsers(&code_clone, &text).await;
+                        }
+                        ControlMessage::SessionResize { session_id, cols, rows } => {
+                            tracing::debug!(code = %code_clone, session_id = %session_id, cols = cols, rows = rows, "Forwarding SessionResize to browsers");
                             state.broadcast_text_to_browsers(&code_clone, &text).await;
                         }
                         _ => {}
@@ -212,6 +220,18 @@ async fn handle_browser(
     }
 
     tracing::info!(code = %code, browser_id = %browser_id, "Browser connected");
+
+    // Replay scrollback so browser gets terminal history immediately.
+    let scrollback = state.get_scrollback(&code).await;
+    if !scrollback.is_empty() {
+        tracing::info!(code = %code, frames = scrollback.len(), "Replaying scrollback to browser");
+        for frame in scrollback {
+            if sender.send(Message::Binary(frame.into())).await.is_err() {
+                state.remove_browser(&code, &browser_id);
+                return;
+            }
+        }
+    }
 
     // Notify mac-client that a browser connected (so it can send session list)
     let browser_connected_msg = ControlMessage::BrowserConnected {

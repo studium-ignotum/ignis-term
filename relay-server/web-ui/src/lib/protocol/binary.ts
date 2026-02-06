@@ -72,29 +72,6 @@ export function decodeBinaryFrame(frame: Uint8Array): { sessionId: string; paylo
 }
 
 /**
- * Encode a terminal resize message for the given session.
- *
- * The resize payload is JSON-formatted for the mac-client to parse.
- *
- * @param sessionId - Target session ID
- * @param cols - Number of columns
- * @param rows - Number of rows
- * @returns Binary frame with resize command
- *
- * @example
- * const frame = encodeResizeMessage("sess-1", 80, 24);
- * // Sends: {"type":"resize","cols":80,"rows":24}
- */
-export function encodeResizeMessage(sessionId: string, cols: number, rows: number): Uint8Array {
-  const payload = textEncoder.encode(JSON.stringify({
-    type: 'resize',
-    cols,
-    rows,
-  }));
-  return encodeBinaryFrame(sessionId, payload);
-}
-
-/**
  * Encode terminal input for the given session.
  *
  * @param sessionId - Target session ID
@@ -134,15 +111,6 @@ if (import.meta.env?.DEV) {
   const emptyDecoded = decodeBinaryFrame(emptyFrame);
   console.assert(emptyDecoded.sessionId === "test", "Empty payload session ID mismatch");
   console.assert(emptyDecoded.payload.length === 0, "Empty payload should have 0 length");
-
-  // Test resize message
-  const resizeFrame = encodeResizeMessage("sess-2", 120, 40);
-  const resizeDecoded = decodeBinaryFrame(resizeFrame);
-  console.assert(resizeDecoded.sessionId === "sess-2", "Resize session ID mismatch");
-  const resizePayload = JSON.parse(textDecoder.decode(resizeDecoded.payload));
-  console.assert(resizePayload.type === "resize", "Resize type mismatch");
-  console.assert(resizePayload.cols === 120, "Resize cols mismatch");
-  console.assert(resizePayload.rows === 40, "Resize rows mismatch");
 
   // Test input message
   const inputFrame = encodeInputMessage("sess-3", "ls -la\n");

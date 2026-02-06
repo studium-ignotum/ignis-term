@@ -38,8 +38,8 @@ pub enum UiEvent {
     ShellRenamed { session_id: String, name: String },
     /// Shell session count changed
     ShellCountChanged(usize),
-    /// Error from IPC server
-    IpcError(String),
+    /// Error from PTY manager
+    PtyError(String),
 
     // Terminal data forwarding
     /// Terminal data from IPC (shell -> relay)
@@ -170,7 +170,7 @@ mod tests {
             session_id: "sess-1".into(),
         };
         let _shell_count = UiEvent::ShellCountChanged(5);
-        let _ipc_error = UiEvent::IpcError("ipc error".into());
+        let _pty_error = UiEvent::PtyError("pty error".into());
         let _terminal_from_shell = UiEvent::TerminalDataFromShell {
             session_id: "sess-1".into(),
             data: vec![0x1b, 0x5b, 0x41],

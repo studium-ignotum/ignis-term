@@ -1,8 +1,11 @@
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::session::generate_session_code;
+
+/// Maximum scrollback buffer size (1 MB)
+const MAX_SCROLLBACK: usize = 1024 * 1024;
 
 /// Message types that can be sent to browsers
 #[derive(Debug, Clone)]
@@ -24,6 +27,11 @@ pub struct Session {
     pub mac_tx: mpsc::Sender<MacMessage>,
     /// Connected browsers: browser_id -> sender channel
     pub browsers: DashMap<String, mpsc::Sender<BrowserMessage>>,
+    /// Accumulated terminal output frames for replay on browser reconnect.
+    /// Each entry is a complete binary frame (with session ID prefix).
+    scrollback_frames: Mutex<Vec<Vec<u8>>>,
+    /// Total byte count of all frames in scrollback (for cap enforcement).
+    scrollback_bytes: Mutex<usize>,
 }
 
 /// Shared application state
@@ -62,6 +70,8 @@ impl AppState {
             Session {
                 mac_tx,
                 browsers: DashMap::new(),
+                scrollback_frames: Mutex::new(Vec::new()),
+                scrollback_bytes: Mutex::new(0),
             },
         );
 
@@ -103,9 +113,72 @@ impl AppState {
     /// Broadcast terminal output (binary) to all browsers in a session
     pub async fn broadcast_to_browsers(&self, code: &str, data: Vec<u8>) {
         if let Some(session) = self.inner.sessions.get(code) {
+            // Append frame to scrollback, dropping oldest frames if over cap
+            {
+                let frame_len = data.len();
+                let mut frames = session.scrollback_frames.lock().await;
+                let mut total = session.scrollback_bytes.lock().await;
+
+                frames.push(data.clone());
+                *total += frame_len;
+
+                // Drop oldest frames until we're under the cap
+                while *total > MAX_SCROLLBACK && !frames.is_empty() {
+                    let removed = frames.remove(0);
+                    *total -= removed.len();
+                }
+            }
+
             for entry in session.browsers.iter() {
                 let _ = entry.value().send(BrowserMessage::Binary(data.clone())).await;
             }
+        }
+    }
+
+    /// Purge scrollback frames belonging to a specific terminal session.
+    /// Binary frame format: [1 byte session_id_len][session_id][payload]
+    pub async fn purge_session_scrollback(&self, code: &str, terminal_session_id: &str) {
+        if let Some(session) = self.inner.sessions.get(code) {
+            let mut frames = session.scrollback_frames.lock().await;
+            let mut total = session.scrollback_bytes.lock().await;
+
+            let tid = terminal_session_id.as_bytes();
+            let before = frames.len();
+            frames.retain(|frame| {
+                if frame.is_empty() {
+                    return false;
+                }
+                let id_len = frame[0] as usize;
+                if frame.len() < 1 + id_len {
+                    return false;
+                }
+                let frame_sid = &frame[1..1 + id_len];
+                frame_sid != tid
+            });
+            let after = frames.len();
+
+            // Recalculate total bytes
+            *total = frames.iter().map(|f| f.len()).sum();
+
+            if before != after {
+                tracing::info!(
+                    code = %code,
+                    terminal_session_id = %terminal_session_id,
+                    purged = before - after,
+                    remaining = after,
+                    "Purged scrollback frames for dead session"
+                );
+            }
+        }
+    }
+
+    /// Get scrollback frames for replay to a newly connected browser.
+    pub async fn get_scrollback(&self, code: &str) -> Vec<Vec<u8>> {
+        if let Some(session) = self.inner.sessions.get(code) {
+            let frames = session.scrollback_frames.lock().await;
+            frames.clone()
+        } else {
+            Vec::new()
         }
     }
 

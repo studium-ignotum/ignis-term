@@ -123,15 +123,13 @@ export function TabsProvider({ children }: { children: ReactNode }) {
 
       const updated = [...prev, newSession];
 
-      // Auto-switch to first session
-      if (prev.length === 0) {
-        // Use timeout to avoid state update during render
-        setTimeout(() => {
-          setActiveSessionId(sessionId);
-          activeSessionIdRef.current = sessionId;
-          setActiveSession(sessionId);
-        }, 0);
-      }
+      // Auto-switch to new sessions (so the terminal gets visible dimensions
+      // and doFit/markTerminalReady can succeed)
+      setTimeout(() => {
+        setActiveSessionId(sessionId);
+        activeSessionIdRef.current = sessionId;
+        setActiveSession(sessionId);
+      }, 0);
 
       return updated;
     });

@@ -19,7 +19,7 @@ import type {
   SessionDisconnectedMessage,
   ConfigMessage,
 } from '../../shared/protocol';
-import { decodeBinaryFrame, encodeInputMessage, encodeResizeMessage } from '../protocol/binary';
+import { decodeBinaryFrame, encodeInputMessage } from '../protocol/binary';
 
 // =============================================================================
 // Connection State Types
@@ -87,8 +87,6 @@ interface ConnectionContextValue {
   sendMessage: (message: object) => void;
   /** Send binary terminal input for a session */
   sendTerminalInput: (sessionId: string, payload: string) => void;
-  /** Send terminal resize for a session */
-  sendTerminalResize: (sessionId: string, cols: number, rows: number) => void;
   /** Send raw binary frame */
   sendBinary: (frame: Uint8Array) => void;
   /** Register handler for JSON control messages */
@@ -157,11 +155,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   const sendTerminalInput = useCallback((termSessionId: string, payload: string) => {
     const frame = encodeInputMessage(termSessionId, payload);
-    sendBinary(frame);
-  }, [sendBinary]);
-
-  const sendTerminalResize = useCallback((termSessionId: string, cols: number, rows: number) => {
-    const frame = encodeResizeMessage(termSessionId, cols, rows);
     sendBinary(frame);
   }, [sendBinary]);
 
@@ -307,6 +300,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           case 'session_list':
           case 'session_connected':
           case 'session_disconnected':
+          // Session resize (mac -> browser)
+          case 'session_resize':
           // Config message
           case 'config':
           // Legacy tab messages (if any)
@@ -364,7 +359,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     disconnect,
     sendMessage: sendMessageFn,
     sendTerminalInput,
-    sendTerminalResize,
     sendBinary,
     registerMessageHandler,
     registerBinaryHandler,

@@ -23,8 +23,6 @@ pub enum RelayEvent {
     Error(String),
     /// Terminal data received from relay (browser input -> shell)
     TerminalData { session_id: String, data: Vec<u8> },
-    /// Resize request from browser
-    Resize { session_id: String, cols: u16, rows: u16 },
     /// Close session request from browser
     CloseSession { session_id: String },
     /// Create new session request from browser
@@ -42,6 +40,8 @@ pub enum RelayCommand {
     SendSessionConnected { session_id: String, name: String },
     /// Notify relay that a session disconnected
     SendSessionDisconnected { session_id: String },
+    /// Notify relay that a session resized (mac -> browser)
+    SendSessionResize { session_id: String, cols: u16, rows: u16 },
     /// Disconnect and reconnect to get a new session code
     Reconnect,
 }
@@ -204,6 +204,14 @@ impl RelayClient {
                                 tracing::warn!("Failed to send session disconnected: {}", e);
                             }
                         }
+                        Some(RelayCommand::SendSessionResize { session_id, cols, rows }) => {
+                            let msg = ControlMessage::SessionResize { session_id, cols, rows };
+                            let json = serde_json::to_string(&msg).unwrap();
+                            tracing::debug!("Sending SessionResize: {}", json);
+                            if let Err(e) = write.send(Message::Text(json.into())).await {
+                                tracing::warn!("Failed to send session resize: {}", e);
+                            }
+                        }
                         Some(RelayCommand::Reconnect) => {
                             tracing::info!("Reconnect requested, closing connection");
                             let _ = write.send(Message::Close(None)).await;
@@ -278,25 +286,7 @@ impl RelayClient {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
                     let msg_type = json.get("type").and_then(|t| t.as_str());
 
-                    if msg_type == Some("resize") {
-                        if let (Some(cols), Some(rows)) = (
-                            json.get("cols").and_then(|c| c.as_u64()),
-                            json.get("rows").and_then(|r| r.as_u64()),
-                        ) {
-                            tracing::debug!(
-                                "Received resize: session={}, cols={}, rows={}",
-                                session_id,
-                                cols,
-                                rows
-                            );
-                            let _ = self.event_tx.send(RelayEvent::Resize {
-                                session_id,
-                                cols: cols as u16,
-                                rows: rows as u16,
-                            });
-                            return;
-                        }
-                    } else if msg_type == Some("close_session") {
+                    if msg_type == Some("close_session") {
                         tracing::info!("Received close_session: session={}", session_id);
                         let _ = self.event_tx.send(RelayEvent::CloseSession {
                             session_id,

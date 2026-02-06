@@ -4,12 +4,16 @@
  * Each instance owns a single xterm terminal for its lifetime.
  * One Terminal component is created per session — show/hide is handled
  * by the parent via CSS, so the xterm buffer is never cleared on tab switch.
+ *
+ * Terminal dimensions come from the mac (via session_resize messages).
+ * On mobile/small screens, the terminal is CSS-scaled to fit the container
+ * rather than sending resize back to the mac.
  */
 
 import { useRef, useEffect } from 'react';
 import { Terminal as XTerminal, type ITerminalOptions } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { TERMINAL_RESIZE_DEBOUNCE_MS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS } from '../../shared/constants';
+import { TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS } from '../../shared/constants';
 import { useTerminal } from '../context/TerminalContext';
 import './Terminal.css';
 
@@ -18,7 +22,6 @@ interface TerminalProps {
   options?: ITerminalOptions;
   onInput?: (data: string) => void;
   onBinaryInput?: (data: string) => void;
-  onTerminalResize?: (cols: number, rows: number) => void;
 }
 
 export default function Terminal({
@@ -26,7 +29,6 @@ export default function Terminal({
   options = {},
   onInput,
   onBinaryInput,
-  onTerminalResize,
 }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTerminal | null>(null);
@@ -35,16 +37,16 @@ export default function Terminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const fitReadyRef = useRef(false);
+  /** Mac's terminal dimensions (source of truth). Null until first session_resize. */
+  const macSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
-  const { registerTerminal, unregisterTerminal } = useTerminal();
+  const { registerTerminal, unregisterTerminal, markTerminalReady, onSessionResize } = useTerminal();
 
   // Store callbacks in refs to avoid re-running the main effect
   const onInputRef = useRef(onInput);
   const onBinaryInputRef = useRef(onBinaryInput);
-  const onTerminalResizeRef = useRef(onTerminalResize);
   onInputRef.current = onInput;
   onBinaryInputRef.current = onBinaryInput;
-  onTerminalResizeRef.current = onTerminalResize;
 
   // Create terminal ONCE on mount — never recreate on sessionId change
   useEffect(() => {
@@ -61,13 +63,51 @@ export default function Terminal({
     // Wire up event handlers
     const dataDisposable = term.onData((data) => onInputRef.current?.(data));
     const binaryDisposable = term.onBinary((data) => onBinaryInputRef.current?.(data));
-    const resizeDisposable = term.onResize((data) => {
-      console.log(`[Terminal] onResize event: cols=${data.cols}, rows=${data.rows}, minCols=${TERMINAL_MIN_COLS}, minRows=${TERMINAL_MIN_ROWS}`);
-      if (data.cols >= TERMINAL_MIN_COLS && data.rows >= TERMINAL_MIN_ROWS) {
-        console.log(`[Terminal] onResize: calling callback`);
-        onTerminalResizeRef.current?.(data.cols, data.rows);
+
+    /**
+     * Apply CSS transform to scale the terminal to fit the container.
+     * Called when the mac sends a resize or the container changes size.
+     */
+    const applyScale = () => {
+      const xtermEl = container.querySelector('.xterm') as HTMLElement | null;
+      if (!xtermEl) return;
+
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const tw = xtermEl.scrollWidth;
+      const th = xtermEl.scrollHeight;
+
+      if (tw <= 0 || th <= 0 || cw <= 0 || ch <= 0) return;
+
+      if (tw <= cw && th <= ch) {
+        // Terminal fits — no scaling needed
+        xtermEl.style.transform = '';
+        xtermEl.style.transformOrigin = '';
+        container.style.overflow = '';
+      } else {
+        // Terminal larger than container — scale to fit
+        const scale = Math.min(cw / tw, ch / th);
+        xtermEl.style.transformOrigin = 'top left';
+        xtermEl.style.transform = `scale(${scale})`;
+        container.style.overflow = 'hidden';
       }
-    });
+    };
+
+    /**
+     * Handle resize from mac: set xterm to mac's exact dimensions,
+     * then apply CSS scaling to fit container.
+     */
+    const handleMacResize = (cols: number, rows: number) => {
+      macSizeRef.current = { cols, rows };
+      if (cols >= TERMINAL_MIN_COLS && rows >= TERMINAL_MIN_ROWS) {
+        term.resize(cols, rows);
+        // Allow xterm to render at new size, then scale
+        requestAnimationFrame(applyScale);
+      }
+    };
+
+    // Subscribe to mac resize events for this session
+    const unsubResize = onSessionResize(sessionId, handleMacResize);
 
     // Load addons asynchronously
     (async () => {
@@ -86,7 +126,7 @@ export default function Terminal({
         console.warn('[Terminal] WebGL not available, using DOM renderer');
       }
 
-      // FitAddon (responsive resize)
+      // FitAddon — used as fallback when no mac size is known yet
       try {
         const { FitAddon } = await import('@xterm/addon-fit');
         const fitAddon = new FitAddon();
@@ -130,44 +170,47 @@ export default function Terminal({
         console.warn('[Terminal] Unicode11Addon not available:', e);
       }
 
-      // Set up ResizeObserver with debounced fit
-      const fitAddon = fitAddonRef.current;
-      if (container && fitAddon) {
+      // Set up ResizeObserver — re-apply scaling when container changes
+      if (container) {
         resizeObserverRef.current = new ResizeObserver(() => {
           clearTimeout(resizeTimeoutRef.current);
           resizeTimeoutRef.current = setTimeout(() => {
-            if (
-              container.clientWidth > 0 &&
-              container.clientHeight > 0 &&
-              fitAddonRef.current
-            ) {
-              fitAddonRef.current.fit();
+            if (container.clientWidth > 0 && container.clientHeight > 0) {
+              if (macSizeRef.current) {
+                // Mac size known — re-apply scale
+                applyScale();
+              } else if (fitAddonRef.current) {
+                // No mac size yet — use FitAddon as fallback
+                fitAddonRef.current.fit();
+              }
             }
-          }, TERMINAL_RESIZE_DEBOUNCE_MS);
+          }, 100);
         });
         resizeObserverRef.current.observe(container);
 
-        // Initial fit — try multiple times to ensure terminal renders properly
-        const doFit = (label: string) => {
+        // Initial fit — use FitAddon until mac sends its size
+        const doInitialFit = (label: string) => {
           const w = container.clientWidth;
           const h = container.clientHeight;
-          console.log(`[Terminal] doFit(${label}): container=${w}x${h}, fitAddon=${!!fitAddonRef.current}, rows=${term.rows}, cols=${term.cols}`);
-          if (fitAddonRef.current && w > 0 && h > 0) {
+          if (fitAddonRef.current && w > 0 && h > 0 && !macSizeRef.current) {
             fitAddonRef.current.fit();
             term.refresh(0, term.rows - 1);
+            markTerminalReady(sessionId);
             term.scrollToBottom();
             term.focus();
-            console.log(`[Terminal] doFit(${label}): after fit rows=${term.rows}, cols=${term.cols}`);
+          } else if (macSizeRef.current) {
+            markTerminalReady(sessionId);
+            applyScale();
+            term.scrollToBottom();
+            term.focus();
           }
         };
-        // Immediate fit attempt
-        requestAnimationFrame(() => doFit('raf'));
-        // Delayed fits to catch late layout (CSS transitions, flex layout settling)
-        setTimeout(() => doFit('50ms'), 50);
-        setTimeout(() => doFit('150ms'), 150);
-        setTimeout(() => doFit('300ms'), 300);
-        setTimeout(() => doFit('600ms'), 600);
-        setTimeout(() => doFit('1000ms'), 1000);
+        requestAnimationFrame(() => doInitialFit('raf'));
+        setTimeout(() => doInitialFit('50ms'), 50);
+        setTimeout(() => doInitialFit('150ms'), 150);
+        setTimeout(() => doInitialFit('300ms'), 300);
+        setTimeout(() => doInitialFit('600ms'), 600);
+        setTimeout(() => doInitialFit('1000ms'), 1000);
       }
     })();
 
@@ -180,7 +223,7 @@ export default function Terminal({
       fitAddonRef.current = null;
       dataDisposable.dispose();
       binaryDisposable.dispose();
-      resizeDisposable.dispose();
+      unsubResize();
       unregisterTerminal(sessionId);
       term.dispose();
       terminalRef.current = null;
@@ -192,7 +235,6 @@ export default function Terminal({
   // Apply option changes to existing terminal
   useEffect(() => {
     const term = terminalRef.current;
-    console.log('[Terminal] options effect, term exists:', !!term, 'theme:', options.theme?.background);
     if (!term) return;
 
     if (options.theme) term.options.theme = options.theme;
@@ -207,11 +249,32 @@ export default function Terminal({
       term.refresh(0, term.rows - 1);
     }
 
-    console.log('[Terminal] Applied options, theme bg:', term.options.theme?.background);
-
     // Re-fit after option changes (font size may change dimensions)
     requestAnimationFrame(() => {
-      fitAddonRef.current?.fit();
+      if (macSizeRef.current) {
+        const container = containerRef.current;
+        if (container) {
+          const xtermEl = container.querySelector('.xterm') as HTMLElement | null;
+          if (xtermEl) {
+            // Reset scale before measuring
+            xtermEl.style.transform = '';
+            requestAnimationFrame(() => {
+              const cw = container.clientWidth;
+              const ch = container.clientHeight;
+              const tw = xtermEl.scrollWidth;
+              const th = xtermEl.scrollHeight;
+              if (tw > cw || th > ch) {
+                const scale = Math.min(cw / tw, ch / th);
+                xtermEl.style.transformOrigin = 'top left';
+                xtermEl.style.transform = `scale(${scale})`;
+                container.style.overflow = 'hidden';
+              }
+            });
+          }
+        }
+      } else {
+        fitAddonRef.current?.fit();
+      }
     });
   }, [options]);
 
@@ -220,8 +283,6 @@ export default function Terminal({
     const timer = setTimeout(() => {
       const term = terminalRef.current;
       if (!term) return;
-
-      console.log('[Terminal] Delayed re-apply, theme bg:', options.theme?.background);
       if (options.theme) term.options.theme = options.theme;
       if (term.rows > 0) {
         term.refresh(0, term.rows - 1);

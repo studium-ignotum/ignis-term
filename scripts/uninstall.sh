@@ -3,10 +3,10 @@
 # Terminal Remote - Uninstaller
 #
 # Removes all Terminal Remote components:
-#   mac-client app, relay-server, shell integration, LaunchAgent, IPC socket.
+#   mac-client app, relay-server, pty-proxy, shell integration, LaunchAgents, Unix socket.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/uninstall.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/studium-ignotum/ignis-term/master/scripts/uninstall.sh | bash
 #   or: bash scripts/uninstall.sh
 #
 
@@ -59,6 +59,7 @@ echo -e "${BLUE}> Stopping running processes...${NC}"
 pkill -f "relay-server" 2>/dev/null || true
 pkill -f "Terminal Remote" 2>/dev/null || true
 pkill -f "mac-client" 2>/dev/null || true
+pkill -f "pty-proxy" 2>/dev/null || true
 sleep 0.3
 echo -e "${GREEN}  Processes stopped${NC}"
 
@@ -113,20 +114,20 @@ else
     echo "  No install directory found (skipped)"
 fi
 
-# ── Remove IPC socket ─────────────────────────────────────────
-echo -e "${BLUE}> Removing IPC socket...${NC}"
+# ── Remove Unix socket ────────────────────────────────────────
+echo -e "${BLUE}> Removing Unix socket...${NC}"
 if [ -e /tmp/terminal-remote.sock ]; then
     rm -f /tmp/terminal-remote.sock
     echo -e "${GREEN}  Removed /tmp/terminal-remote.sock${NC}"
 else
-    echo "  No IPC socket found (skipped)"
+    echo "  No Unix socket found (skipped)"
 fi
 
 # ── Optional dependency removal ───────────────────────────────
 echo ""
 
 if [ -t 0 ]; then
-    echo -en "${YELLOW}Remove cloudflared and tmux? (y/n) ${NC}"
+    echo -en "${YELLOW}Remove cloudflared? (y/n) ${NC}"
     read -r DEP_CHOICE
 else
     DEP_CHOICE="n"
@@ -135,10 +136,9 @@ fi
 if [ "$DEP_CHOICE" = "y" ] || [ "$DEP_CHOICE" = "Y" ]; then
     echo -e "${BLUE}> Removing dependencies...${NC}"
     brew uninstall cloudflared 2>/dev/null || true
-    brew uninstall tmux 2>/dev/null || true
-    echo -e "${GREEN}  Removed cloudflared and tmux${NC}"
+    echo -e "${GREEN}  Removed cloudflared${NC}"
 else
-    echo "  Kept cloudflared and tmux"
+    echo "  Kept cloudflared"
 fi
 
 # ── Summary ───────────────────────────────────────────────────
@@ -152,7 +152,7 @@ echo "    - App bundle ($APP_DIR/$APP_NAME)"
 echo "    - Install directory ($INSTALL_DIR/)"
 echo "    - Shell integration source lines"
 echo "    - LaunchAgents (relay-server + mac-client)"
-echo "    - IPC socket"
+echo "    - Unix socket"
 echo ""
 echo "  Restart your shell or open a new terminal to"
 echo "  clear any remaining shell integration state."

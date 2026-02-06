@@ -11,7 +11,7 @@ import './TerminalPage.css';
 
 export default function TerminalPage() {
   const navigate = useNavigate();
-  const { state, isConnected, disconnect, sendTerminalInput, sendTerminalResize } = useConnection();
+  const { state, isConnected, disconnect, sendTerminalInput } = useConnection();
   const { activeSessionId, options } = useTerminal();
   const { tabs, createTab } = useTabs();
 
@@ -58,7 +58,6 @@ export default function TerminalPage() {
                   options={options}
                   onInput={(data) => sendTerminalInput(tab.id, data)}
                   onBinaryInput={(data) => sendTerminalInput(tab.id, data)}
-                  onTerminalResize={(cols, rows) => sendTerminalResize(tab.id, cols, rows)}
                 />
               </div>
             ))}

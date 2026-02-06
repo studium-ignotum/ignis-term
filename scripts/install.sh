@@ -6,7 +6,7 @@
 #   mac-client menu bar app, relay-server, dependencies, and shell integration.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/studium-ignotum/ignis-term/master/scripts/install.sh | bash
 #
 # Or with a specific version:
 #   VERSION=v2.0.0 curl -fsSL ... | bash
@@ -24,7 +24,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # ── Constants ──────────────────────────────────────────────────
-REPO="studium-ignotum/iterm2-remote"
+REPO="studium-ignotum/ignis-term"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="$HOME/.terminal-remote"
 APP_DIR="$HOME/Applications"
@@ -67,7 +67,7 @@ echo ""
 echo -e "${BLUE}> Checking prerequisites...${NC}"
 
 if ! command -v brew &>/dev/null; then
-    echo -e "${RED}Error: Homebrew is required to install dependencies (cloudflared, tmux).${NC}"
+    echo -e "${RED}Error: Homebrew is required to install dependencies (cloudflared).${NC}"
     echo ""
     echo "  Install Homebrew first:"
     echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
@@ -78,7 +78,7 @@ fi
 echo -e "${GREEN}  Homebrew found${NC}"
 
 # ── Dependency installation ────────────────────────────────────
-for dep in cloudflared tmux; do
+for dep in cloudflared; do
     if command -v "$dep" &>/dev/null; then
         echo -e "${GREEN}  $dep already installed${NC}"
     else
@@ -133,6 +133,11 @@ mkdir -p "$APP_DIR"
 cp "$TMPDIR/relay-server" "$INSTALL_DIR/bin/relay-server"
 chmod +x "$INSTALL_DIR/bin/relay-server"
 echo -e "${GREEN}  relay-server -> $INSTALL_DIR/bin/relay-server${NC}"
+
+# Install pty-proxy binary
+cp "$TMPDIR/pty-proxy" "$INSTALL_DIR/bin/pty-proxy"
+chmod +x "$INSTALL_DIR/bin/pty-proxy"
+echo -e "${GREEN}  pty-proxy -> $INSTALL_DIR/bin/pty-proxy${NC}"
 
 # Install .app bundle (remove old version first for clean update)
 rm -rf "$APP_DIR/$APP_NAME"
@@ -220,7 +225,7 @@ fi
 launchctl unload "$RELAY_PLIST" 2>/dev/null || true
 launchctl unload "$APP_PLIST" 2>/dev/null || true
 
-# Build PATH that includes Homebrew so services can find cloudflared/tmux
+# Build PATH that includes Homebrew so services can find cloudflared
 BREW_PREFIX="$(brew --prefix)"
 LAUNCH_PATH="${BREW_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -275,6 +280,8 @@ cat > "$APP_PLIST" << EOF
         <key>PATH</key>
         <string>${LAUNCH_PATH}</string>
     </dict>
+    <key>WorkingDirectory</key>
+    <string>${HOME}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -306,6 +313,7 @@ echo ""
 echo "  Installed:"
 echo "    App:          $APP_DIR/$APP_NAME"
 echo "    Relay:        $INSTALL_DIR/bin/relay-server"
+echo "    PTY Proxy:    $INSTALL_DIR/bin/pty-proxy"
 echo "    Shell config: $INSTALL_DIR/init.$SHELL_EXT"
 echo ""
 echo "  Services are running and will auto-start on login."

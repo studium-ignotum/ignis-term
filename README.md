@@ -1,13 +1,13 @@
-# iTerm2 Remote
+# Terminal Remote
 
-Access your Mac's iTerm2 terminal sessions from any browser, anywhere.
+Access your Mac's terminal sessions from any browser, anywhere.
 
-Your Mac connects to a relay server, and you can connect from your iPad, laptop, or phone to see and interact with all your open iTerm2 tabs as if you were sitting at your desk.
+A menu bar app runs on your Mac, connects to a relay server, and you open the relay's web UI from any device — iPad, laptop, phone — to see and interact with your terminal sessions.
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/studium-ignotum/ignis-term/master/scripts/install.sh | bash
 ```
 
 That's it. Services start immediately and auto-start on login.
@@ -15,340 +15,252 @@ That's it. Services start immediately and auto-start on login.
 To install a specific version:
 
 ```bash
-VERSION=v2.1.0 curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/install.sh | bash
+VERSION=v2.1.0 curl -fsSL https://raw.githubusercontent.com/studium-ignotum/ignis-term/master/scripts/install.sh | bash
 ```
 
 ### What it does
 
-- Installs Homebrew dependencies (`cloudflared`, `tmux`)
+- Installs Homebrew dependencies (`cloudflared`)
 - Downloads the latest release for your architecture (Apple Silicon or Intel)
-- Installs the menu bar app and relay server
+- Installs the menu bar app, relay server, and pty-proxy to `~/.terminal-remote/`
+- Installs `Terminal Remote.app` to `~/Applications/`
 - Configures shell integration (zsh, bash, or fish)
 - Creates LaunchAgents so services auto-start on login and restart on crash
 
 ### Prerequisites
 
 - **macOS** (Apple Silicon or Intel)
-- **Homebrew** (for installing cloudflared and tmux)
+- **Homebrew** (for installing cloudflared)
+
+### Shell integration
+
+Add one line to your shell rc file so new terminal windows are automatically wrapped in pty-proxy and become remotely accessible:
+
+```bash
+# ~/.bashrc
+source ~/.terminal-remote/init.bash
+
+# ~/.zshrc
+source ~/.terminal-remote/init.zsh
+
+# ~/.config/fish/config.fish
+source ~/.terminal-remote/init.fish
+```
+
+The pty-proxy is fully transparent — scroll, copy, mouse, and all terminal features work natively. Unlike tmux-based approaches, there are no compatibility issues with your terminal emulator.
 
 ## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/studium-ignotum/iterm2-remote/master/scripts/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/studium-ignotum/ignis-term/master/scripts/uninstall.sh | bash
 ```
 
-Removes the app, binaries, LaunchAgents, shell integration, and IPC socket.
+Removes the app, binaries, LaunchAgents, and shell integration.
 
 ## Architecture
 
 ```
 ┌─────────────┐     WebSocket     ┌──────────────┐     WebSocket     ┌─────────────┐
 │  Mac Client │ ◄───────────────► │ Relay Server │ ◄───────────────► │  Browser UI │
-│  (iTerm2)   │                   │   (Cloud)    │                   │  (React)    │
-└─────────────┘                   └──────────────┘                   └─────────────┘
+│  (menu bar) │                   │  (Rust/Axum) │                   │  (React)    │
+└──────┬──────┘                   └──────────────┘                   └─────────────┘
+       │
+       ├── pty-proxy (transparent PTY capture per shell)
+       └── cloudflared (tunnel for remote access)
 ```
 
-**Components:**
+| Component | Directory | Language | Purpose |
+|-----------|-----------|----------|---------|
+| **Mac Client** | `mac-client/` | Rust | Menu bar app, manages pty-proxy sessions, bridges to relay |
+| **PTY Proxy** | `pty-proxy/` | Rust | Transparent PTY wrapper that captures terminal I/O |
+| **Relay Server** | `relay-server/` | Rust | Routes WebSocket messages between Mac and browsers |
+| **Web UI** | `relay-server/web-ui/` | TypeScript/React | Terminal UI with xterm.js, embedded in relay binary |
+| **Shell Integration** | `shell-integration/` | Bash/Zsh/Fish | Auto-wraps new shells in pty-proxy |
 
-| Component | Directory | Purpose |
-|-----------|-----------|---------|
-| **Mac Client** | `mac-client/` | Runs on your Mac, bridges iTerm2 to the relay |
-| **Relay Server** | `relay-server/` | Routes messages between Mac and browser clients |
-| **Web UI** | `ui/` | React app with xterm.js for terminal display |
+## How it works
 
-## Features
+### Connection flow
 
-### Current (v1)
+1. **Mac client** starts and connects to the relay server via WebSocket
+2. **Relay server** generates a 6-character session code
+3. **Mac client** displays the code in the menu bar
+4. **User** opens the relay URL in a browser and enters the code
+5. **Relay** authenticates the browser and pairs it with the Mac client
+6. **Browser** receives the session list and displays terminal tabs
 
-- Real-time terminal output streaming
-- Full terminal emulation (colors, cursor positioning, ANSI sequences)
-- Keyboard input from browser to iTerm2
-- Special keys support (Ctrl+C, arrows, Tab, etc.)
-- Copy/paste in browser terminal
-- Terminal resize with window
-- View and switch between iTerm2 tabs
-- Session codes for secure pairing (6 characters, 5-minute expiry)
-- Auto-reconnection with exponential backoff
+### Terminal I/O
 
-### Coming Soon
+Each shell session is wrapped in a `pty-proxy` process that sits between the terminal emulator and the shell. The proxy forwards all I/O transparently while sending a copy to the mac-client via Unix socket.
 
-- Performance optimizations (<100ms latency target)
-- Bounded scrollback memory
-- Rate limiting
-- Graceful shutdown handling
-
-## iTerm2 Configuration
-
-The Mac client uses iTerm2's Python API. You must enable it:
-
-1. Open **iTerm2**
-2. Go to **iTerm2 → Preferences** (or press `⌘,`)
-3. Navigate to **General → Magic**
-4. Check **"Enable Python API"**
-
-Without this setting, the Mac client cannot communicate with iTerm2.
-
-## Remote Access with Cloudflare Tunnel
-
-To access your terminal from anywhere (not just localhost):
-
-```bash
-# Install cloudflared
-brew install cloudflared
-
-# Start relay server
-cd relay-server && pnpm start &
-
-# Create a quick tunnel (generates random URL)
-cloudflared tunnel --url http://localhost:8080
+```
+Terminal emulator (iTerm2, etc.)
+    ↕ PTY (transparent)
+pty-proxy
+    ├── ↕ Shell (zsh/bash/fish)
+    └── → Unix socket → Mac client
+                            → WebSocket to relay
+                            → Relay broadcasts to browsers
+                            → xterm.js renders output
 ```
 
-Use the generated URL (e.g., `https://random-words.trycloudflare.com`) in your browser.
+Browser input flows in reverse: xterm.js → relay → mac-client → pty-proxy → shell.
 
-For persistent tunnels with custom domains, see [docs/SETUP.md](docs/SETUP.md#cloudflare-tunnel-setup).
+### Session management
+
+- Shell integration wraps each new interactive shell in a pty-proxy instance
+- pty-proxy connects to the mac-client via Unix socket (`/tmp/terminal-remote.sock`)
+- Each proxy sends a registration message (shell, pid, tty) on connect
+- Session connect/disconnect events are broadcast to browsers as JSON control messages
+- The relay maintains a scrollback buffer (1 MB) per session, replayed on browser reconnect
+
+### Session codes
+
+- 6 characters from `ABCDEFGHJKMNPQRSTVWXYZ23456789` (no lookalike chars)
+- Case-insensitive entry
+- Generated by the relay server using nanoid
 
 ## Configuration
 
-### Environment Variables
+### Environment variables
 
 **Relay Server:**
 ```bash
-RELAY_PORT=8080  # WebSocket server port (default: 8080)
+PORT=3000  # Listen port (default: 3000)
 ```
 
 **Mac Client:**
 ```bash
-RELAY_URL=ws://localhost:8080/mac  # Relay server URL
-```
-
-**Web UI:**
-Create a `.env` file from the example:
-```bash
-cp ui/.env.example ui/.env
-```
-
-Contents:
-```bash
-VITE_RELAY_URL=ws://localhost:8080/browser
-```
-
-## Project Structure
-
-```
-claude-code-remote/
-├── mac-client/           # Mac-side application
-│   ├── src/
-│   │   ├── index.ts          # Entry point
-│   │   ├── connection.ts     # WebSocket connection manager
-│   │   ├── session-manager.ts # Routes I/O between relay and iTerm2
-│   │   └── iterm-bridge.ts   # Python subprocess management
-│   ├── iterm-bridge.py       # Python bridge to iTerm2
-│   └── coprocess-bridge.sh   # Bash coprocess for terminal I/O
-│
-├── relay-server/         # Cloud relay server
-│   ├── server.ts             # Main server entry point
-│   ├── session-registry.ts   # Session pairing and lifecycle
-│   └── shared/
-│       ├── protocol.ts       # Zod message type definitions
-│       └── constants.ts      # Configuration defaults
-│
-├── ui/                   # React web application
-│   ├── src/
-│   │   ├── App.tsx           # Root component
-│   │   ├── routes/           # Page components
-│   │   ├── lib/
-│   │   │   ├── hooks/        # Custom React hooks
-│   │   │   ├── stores/       # State management
-│   │   │   └── services/     # WebSocket client
-│   │   └── shared/           # Shared types
-│   └── vite.config.ts        # Build configuration
-│
-└── .planning/            # Project documentation
-    ├── PROJECT.md            # Project overview
-    ├── REQUIREMENTS.md       # Detailed requirements
-    ├── ROADMAP.md            # Development phases
-    ├── STATE.md              # Current project state
-    └── codebase/             # Architecture docs
-        ├── ARCHITECTURE.md   # System design
-        ├── STRUCTURE.md      # File organization
-        └── STACK.md          # Technology stack
+RELAY_URL=ws://localhost:3000/ws  # Relay WebSocket URL (default)
 ```
 
 ## Development
 
-### Scripts
-
-**Relay Server:**
-```bash
-pnpm start     # Run the server
-```
-
-**Mac Client:**
-```bash
-pnpm run dev   # Run with hot reload (tsx)
-pnpm run build # Compile TypeScript
-pnpm start     # Run compiled version
-```
-
-**Web UI:**
-```bash
-pnpm run dev      # Development server with hot reload
-pnpm run build    # Production build
-pnpm run preview  # Preview production build
-```
-
-### Technology Stack
+### Tech stack
 
 | Layer | Technology |
 |-------|------------|
-| **Language** | TypeScript 5.0 |
-| **Runtime** | Node.js 24.x |
-| **WebSocket** | ws 8.18.0 |
-| **Validation** | Zod 4.3.6 |
-| **UI Framework** | React 19 |
-| **Terminal** | xterm.js 6.0.0 |
-| **Build Tool** | Vite 6.0 |
-| **Package Manager** | pnpm |
+| **Mac Client** | Rust, Tokio, tray-icon, muda, tokio-tungstenite |
+| **PTY Proxy** | Rust, nix (PTY/fork/poll), Unix sockets |
+| **Relay Server** | Rust, Axum, Tokio, rust-embed, DashMap |
+| **Web UI** | React 19, TypeScript 5, Vite 6, xterm.js 6, Zod |
+| **Infrastructure** | cloudflared, Homebrew, LaunchAgents |
 
-### Message Protocol
+### Building
 
-All components communicate via Zod-validated WebSocket messages:
+```bash
+# Mac client
+cargo build -p mac-client
 
-**Browser → Relay:**
-- `JoinMessage` - Join session with code
-- `UserInputMessage` - Send keyboard input
-- `SelectTabMessage` - Switch iTerm2 tab
+# PTY proxy
+cargo build -p pty-proxy
 
-**Mac → Relay:**
-- `SessionDataMessage` - Terminal output and tab updates
+# Relay server (build web UI first)
+cd relay-server/web-ui && pnpm build
+cargo build -p relay-server
 
-**Relay → Browser:**
-- `JoinedMessage` - Session join confirmation
-- `TerminalDataMessage` - Terminal output to display
-- `SessionListMessage` - Available tabs
-
-For full protocol details, see `relay-server/shared/protocol.ts`.
-
-## How It Works
-
-### Connection Flow
-
-1. **Mac client** starts and connects to relay server via WebSocket
-2. **Relay server** generates a 6-character session code
-3. **Mac client** displays the code to the user
-4. **User** enters the code in the browser
-5. **Browser** connects to relay and joins the session
-6. **Relay** pairs the browser with the Mac client
-
-### Terminal I/O Flow
-
-```
-User types in browser
-        │
-        ▼
-Browser sends UserInput message
-        │
-        ▼
-Relay routes to Mac client
-        │
-        ▼
-Mac client writes to iTerm2 via Python bridge
-        │
-        ▼
-iTerm2 executes command
-        │
-        ▼
-Terminal output captured by coprocess
-        │
-        ▼
-Mac client sends TerminalData message
-        │
-        ▼
-Relay broadcasts to all connected browsers
-        │
-        ▼
-Browser renders in xterm.js
+# Web UI only
+cd relay-server/web-ui && pnpm build
 ```
 
-### Session Codes
+### Running locally
 
-- 6 characters using `ABCDEFGHJKMNPQRSTVWXYZ23456789` (no lookalike chars)
-- Expire after 5 minutes if unused
-- Never expire once a browser connects
-- Case-insensitive entry
+```bash
+# Terminal 1: Relay server
+cargo run -p relay-server
+
+# Terminal 2: Mac client
+cargo run -p mac-client
+
+# Terminal 3: Web UI dev server (optional, for HMR)
+cd relay-server/web-ui && pnpm dev
+```
+
+Access via `http://localhost:5173` (Vite dev) or `http://localhost:3000` (relay with embedded UI).
+
+### Testing
+
+```bash
+cargo test -p mac-client
+cargo test -p relay-server
+```
+
+### Project structure
+
+```
+ignis-term/
+├── mac-client/                    # Rust menu bar application
+│   └── src/
+│       ├── main.rs                # Entry point, event loop, menu
+│       ├── app.rs                 # App state, event types
+│       ├── protocol.rs            # Control message serialization
+│       ├── relay/                 # WebSocket client with auto-reconnect
+│       └── pty/mod.rs             # PTY proxy session management
+│
+├── pty-proxy/                     # Transparent PTY wrapper
+│   └── src/
+│       └── main.rs                # PTY fork, I/O forwarding, Unix socket
+│
+├── relay-server/                  # Rust relay server
+│   ├── src/
+│   │   ├── main.rs                # Axum server setup
+│   │   ├── state.rs               # Session state, scrollback buffer
+│   │   ├── protocol.rs            # Control message enum
+│   │   ├── session.rs             # Session code generation
+│   │   └── handlers/ws.rs         # WebSocket handler (mac + browser)
+│   │
+│   ├── web-ui/                    # React web application
+│   │   └── src/
+│   │       ├── App.tsx
+│   │       ├── routes/            # LoginPage, TerminalPage
+│   │       ├── lib/context/       # Connection, Terminal, Tabs contexts
+│   │       ├── lib/components/    # Terminal, TerminalTabs, etc.
+│   │       └── shared/            # Constants, protocol schemas
+│   │
+│   └── assets/                    # Built web UI (embedded in binary)
+│
+├── shell-integration/             # Shell init scripts (bash/zsh/fish)
+└── scripts/                       # install.sh, uninstall.sh
+```
+
+## Remote access with Cloudflare Tunnel
+
+The Mac client automatically spawns `cloudflared` to create a tunnel, providing a public HTTPS URL displayed in the menu bar. No manual tunnel setup required.
+
+For manual tunnel creation:
+
+```bash
+# Start relay server
+cargo run -p relay-server &
+
+# Create a quick tunnel
+cloudflared tunnel --url http://localhost:3000
+```
+
+Use the generated URL (e.g., `https://random-words.trycloudflare.com`) in your browser.
 
 ## Troubleshooting
 
-### "Connection refused" error
-
-1. Ensure the relay server is running (`pnpm start` in `relay-server/`)
-2. Check the `RELAY_URL` matches the relay server address
-3. Verify port 8080 is not blocked by firewall
-
 ### Session code not working
 
-- Codes expire after 5 minutes - get a fresh code from the Mac client
 - Codes are case-insensitive
-- Ensure Mac client is still connected to relay
+- Ensure the Mac client is still connected to the relay (check menu bar status)
+- Restart the Mac client if needed
 
 ### Terminal not displaying output
 
-1. Check the Mac client console for errors
-2. Ensure iTerm2 is running
-3. Verify the Python bridge started successfully
+1. Check that the pty-proxy is running: `pgrep pty-proxy`
+2. Check the Mac client logs: `log stream --predicate 'process == "mac-client"'`
+3. Verify the relay server is running
 
 ### Browser shows "Disconnected"
 
-- Check relay server is still running
-- The connection will auto-reconnect (1-30 second backoff)
+- Check the relay server is still running
+- The connection will auto-reconnect with exponential backoff
 - Refresh the page if reconnection fails
 
-## Documentation
+## Security notes
 
-### Setup & Usage
-
-| Document | Description |
-|----------|-------------|
-| [docs/SETUP.md](docs/SETUP.md) | **Complete setup guide** with iTerm2 config and Cloudflare Tunnel |
-| [mac-client/README.md](mac-client/README.md) | Mac client architecture and data flow |
-| [relay-server/README.md](relay-server/README.md) | Relay server protocol and session management |
-| [ui/README.md](ui/README.md) | Web UI components and WebSocket service |
-
-### Project Planning (in `.planning/`)
-
-| Document | Description |
-|----------|-------------|
-| `PROJECT.md` | Project overview and requirements |
-| `REQUIREMENTS.md` | Detailed v1 requirements with status |
-| `ROADMAP.md` | Development phases and progress |
-| `codebase/ARCHITECTURE.md` | System architecture deep dive |
-| `codebase/STRUCTURE.md` | Where to find and add code |
-| `codebase/STACK.md` | Full technology stack details |
-| `codebase/CONCERNS.md` | Known issues and tech debt |
-
-## Security Notes
-
-This project is currently in development and should not be used in production without addressing:
-
-- Session codes provide basic access control (not authentication)
-- Terminal input is passed directly to iTerm2 (no sanitization)
-- No rate limiting on connections or messages
-- No audit logging
-
-For production use, consider:
-- Adding proper authentication (OAuth, JWT)
-- Implementing rate limiting
-- Adding input validation
-- Enabling TLS for all connections
-- Adding session revocation capability
-
-## Contributing
-
-1. Read `.planning/PROJECT.md` for project context
-2. Check `.planning/codebase/STRUCTURE.md` for where to add code
-3. Follow existing patterns in the codebase
-4. Ensure TypeScript compiles without errors
-
-## License
-
-[Add license information]
+- Session codes provide access control (not authentication)
+- Terminal input is passed directly to the shell (no sanitization)
+- For production use, consider adding proper authentication and TLS
+- Cloudflare Tunnel provides encrypted transport for remote access

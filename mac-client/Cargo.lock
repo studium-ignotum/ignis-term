@@ -1473,6 +1473,7 @@ dependencies = [
  "arboard",
  "futures-util",
  "image",
+ "libc",
  "muda",
  "portable-pty",
  "serde",

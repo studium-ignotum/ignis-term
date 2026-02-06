@@ -17,6 +17,19 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
+/// Find tmux binary, checking Homebrew paths first.
+fn tmux_bin() -> &'static str {
+    static BIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        for path in &["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"] {
+            if std::path::Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+        "tmux".to_string()
+    })
+}
+
 /// Information about a tmux session.
 #[derive(Debug, Clone)]
 pub struct TmuxSessionInfo {
@@ -211,7 +224,7 @@ async fn watch_for_new_sessions(
 
 /// List all tmux sessions.
 fn list_tmux_sessions() -> Vec<TmuxSessionInfo> {
-    let output = Command::new("tmux")
+    let output = Command::new(tmux_bin())
         .args(["list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}"])
         .output();
 
@@ -255,12 +268,12 @@ async fn create_and_attach(
     let session_name = name.unwrap_or_else(|| format!("remote-{}", uuid::Uuid::new_v4().to_string()[..8].to_string()));
 
     // Set history-limit before creating, so new session inherits it
-    let _ = Command::new("tmux")
+    let _ = Command::new(tmux_bin())
         .args(["set-option", "-g", "history-limit", "50000"])
         .output();
 
     // Create the tmux session in detached mode first
-    let create_result = Command::new("tmux")
+    let create_result = Command::new(tmux_bin())
         .args(["new-session", "-d", "-s", &session_name])
         .output();
 
@@ -335,7 +348,7 @@ async fn attach_to_session(
         })?;
 
         // Build tmux attach command
-        let mut cmd = CommandBuilder::new("tmux");
+        let mut cmd = CommandBuilder::new(tmux_bin());
         cmd.arg("attach-session");
         cmd.arg("-t");
         cmd.arg(&session_name_clone);
@@ -366,7 +379,7 @@ async fn attach_to_session(
             });
 
             // Capture existing scrollback buffer so browser gets history
-            if let Ok(out) = Command::new("tmux")
+            if let Ok(out) = Command::new(tmux_bin())
                 .args(["capture-pane", "-t", &name, "-p", "-S", "-"])
                 .output()
             {
@@ -516,7 +529,7 @@ async fn refresh_session(
 }
 
 fn kill_tmux_session(session_name: &str, event_tx: &mpsc::UnboundedSender<TmuxEvent>) {
-    let result = Command::new("tmux")
+    let result = Command::new(tmux_bin())
         .args(["kill-session", "-t", session_name])
         .output();
 
@@ -566,7 +579,7 @@ async fn kill_session_by_id(
         info!(session_id = %session_id, session_name = %name, "Killing tmux session");
 
         // Kill the tmux session
-        let result = Command::new("tmux")
+        let result = Command::new(tmux_bin())
             .args(["kill-session", "-t", &name])
             .output();
 

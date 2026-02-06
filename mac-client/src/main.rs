@@ -15,7 +15,8 @@ use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use smappservice_rs::{AppService, ServiceStatus, ServiceType};
 use std::io::{BufRead, BufReader, Cursor};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -50,6 +51,7 @@ struct App {
     bg_handle: Option<thread::JoinHandle<()>>,
     copy_reset_time: Option<Instant>,
     tmux_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<TmuxCommand>>,
+    cloudflared_pid: Arc<AtomicU32>,
 }
 
 impl App {
@@ -63,6 +65,7 @@ impl App {
             bg_handle: None,
             copy_reset_time: None,
             tmux_cmd_tx: None,
+            cloudflared_pid: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -122,11 +125,13 @@ impl App {
                 }
             }
             ID_QUIT => {
-                info!("Quit requested, shutting down...");
-                if let Some(bg_tx) = &self.bg_tx {
-                    let _ = bg_tx.send(BackgroundCommand::Shutdown);
+                info!("Quit requested, exiting");
+                let pid = self.cloudflared_pid.load(Ordering::Relaxed);
+                if pid != 0 {
+                    info!("Killing cloudflared (pid {})", pid);
+                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                 }
-                event_loop.exit();
+                std::process::exit(0);
             }
             _ => {
                 debug!("Unknown menu item clicked: {:?}", event.id());
@@ -308,10 +313,14 @@ fn main() {
     // Create tmux command channel (sender stays in main thread)
     let (tmux_cmd_tx, tmux_cmd_rx) = tokio::sync::mpsc::unbounded_channel::<TmuxCommand>();
 
+    // Shared PID for killing cloudflared on quit
+    let cloudflared_pid = Arc::new(AtomicU32::new(0));
+
     // Spawn background thread with Tokio runtime
     let ui_tx_bg = ui_tx.clone();
+    let cloudflared_pid_bg = cloudflared_pid.clone();
     let bg_handle = thread::spawn(move || {
-        run_background_tasks(ui_tx_bg, bg_rx, tmux_cmd_rx);
+        run_background_tasks(ui_tx_bg, bg_rx, tmux_cmd_rx, cloudflared_pid_bg);
     });
 
     // Load icon from embedded bytes
@@ -404,6 +413,7 @@ fn main() {
     app.ui_rx = Some(ui_rx);
     app.bg_handle = Some(bg_handle);
     app.tmux_cmd_tx = Some(tmux_cmd_tx);
+    app.cloudflared_pid = cloudflared_pid;
 
     info!("Entering main event loop");
 
@@ -461,6 +471,7 @@ fn run_background_tasks(
     ui_tx: mpsc::Sender<UiEvent>,
     bg_rx: mpsc::Receiver<BackgroundCommand>,
     tmux_cmd_rx: tokio::sync::mpsc::UnboundedReceiver<TmuxCommand>,
+    cloudflared_pid: Arc<AtomicU32>,
 ) {
     info!("Background thread starting");
 
@@ -516,8 +527,9 @@ fn run_background_tasks(
 
         // Spawn cloudflared tunnel
         let ui_tx_tunnel = ui_tx.clone();
+        let cloudflared_pid = cloudflared_pid.clone();
         let tunnel_handle = tokio::task::spawn_blocking(move || {
-            run_cloudflared_tunnel(ui_tx_tunnel);
+            run_cloudflared_tunnel(ui_tx_tunnel, cloudflared_pid);
         });
 
         // Forward tmux events to relay (output -> browser)
@@ -791,8 +803,25 @@ fn forward_relay_events(
 ///
 /// Returns the child process handle so it can be killed on shutdown.
 /// Sends UiEvent::TunnelUrl when the tunnel URL is found.
-fn run_cloudflared_tunnel(ui_tx: mpsc::Sender<UiEvent>) -> Option<Child> {
-    let mut child = match Command::new("cloudflared")
+/// Find cloudflared binary, checking Homebrew paths first.
+fn find_cloudflared() -> String {
+    for path in &[
+        "/opt/homebrew/bin/cloudflared",
+        "/usr/local/bin/cloudflared",
+    ] {
+        if std::path::Path::new(path).exists() {
+            return path.to_string();
+        }
+    }
+    // Fall back to PATH lookup
+    "cloudflared".to_string()
+}
+
+fn run_cloudflared_tunnel(ui_tx: mpsc::Sender<UiEvent>, pid_store: Arc<AtomicU32>) -> Option<Child> {
+    let cloudflared = find_cloudflared();
+    info!("Using cloudflared at: {}", cloudflared);
+
+    let mut child = match Command::new(&cloudflared)
         .args(["tunnel", "--url", "http://localhost:3000"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -806,7 +835,9 @@ fn run_cloudflared_tunnel(ui_tx: mpsc::Sender<UiEvent>) -> Option<Child> {
         }
     };
 
-    info!("cloudflared tunnel started (pid {})", child.id());
+    let child_pid = child.id();
+    info!("cloudflared tunnel started (pid {})", child_pid);
+    pid_store.store(child_pid, Ordering::Relaxed);
 
     let stderr = child.stderr.take().expect("stderr was piped");
     let reader = BufReader::new(stderr);
